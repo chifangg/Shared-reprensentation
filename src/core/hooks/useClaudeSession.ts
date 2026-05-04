@@ -156,7 +156,7 @@ export function useClaudeSession(opts: UseClaudeSessionOptions) {
   const turnCountRef = useRef(0);
 
   const send = useCallback(
-    async (prompt: string) => {
+    async (prompt: string, extraOverride?: Record<string, unknown>) => {
       setStatus("running");
       setError(null);
       // Optimistic user turn — Claude Code's stream-json doesn't echo
@@ -177,7 +177,9 @@ export function useClaudeSession(opts: UseClaudeSessionOptions) {
           // For resume, the backend reads the conversation UUID from
           // `sessionId` (the prior conversation we want to continue).
           sessionId: isFirstTurn ? undefined : sessionId,
-          extra: opts.extra,
+          // Per-call extra (e.g. append_system_prompt for the first
+          // turn's project context) merges over the hook-wide extra.
+          extra: { ...opts.extra, ...extraOverride },
         });
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));

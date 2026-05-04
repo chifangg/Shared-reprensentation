@@ -296,6 +296,311 @@ async fn load_conversation_messages(
 }
 
 #[derive(Debug, Deserialize)]
+struct SuggestionsRequest {
+    /// Pre-built project-context blob (project tree + file contents +
+    /// optional goal) — see `buildProjectContext` in the frontend.
+    project_context: String,
+}
+
+#[derive(Debug, Serialize)]
+struct SuggestionsResult {
+    /// 2–5 word distillation of the goal — shown in the chat-theme
+    /// header strip.
+    title: String,
+    /// 3 contextual starter prompts referencing the uploaded project.
+    suggestions: Vec<String>,
+}
+
+/// One-shot Claude call that produces a chat-theme title + 3 contextual
+/// starter prompts in one round-trip.
+///
+/// Why a separate endpoint vs. the chat WebSocket: this is a meta query
+/// (we don't want it appearing in the conversation history or being
+/// remembered by Claude in subsequent turns). Spawning Claude one-shot
+/// here keeps it cleanly isolated.
+async fn generate_suggestions(
+    Json(req): Json<SuggestionsRequest>,
+) -> Json<ApiResponse<SuggestionsResult>> {
+    let claude_path = match find_claude_binary_web() {
+        Ok(p) => p,
+        Err(e) => return Json(ApiResponse::error(format!("claude binary not found: {e}"))),
+    };
+
+    let prompt = format!(
+        "Given the project below and the user's stated goal, produce two things:\n\n\
+1. `title`: a 2–5 word distillation of the goal that captures its core \
+intent (NOT a verbatim truncation). Used as a header label, must read \
+naturally as a noun phrase. e.g. \"dark-mode toggle\", \"stock data \
+preprocessing\", \"checkout flow refactor\".\n\n\
+2. `suggestions`: 3 short, specific starter prompts the user could open \
+the conversation with. Each suggestion should:\n\
+- Reference specific files, modules, or concepts from the project\n\
+- Be concrete and actionable, not abstract\n\
+- Be no more than 20 words\n\n\
+Output ONLY valid JSON in exactly this format, with no markdown fences, \
+no prose, no explanation:\n\
+{{\"title\": \"...\", \"suggestions\": [\"...\", \"...\", \"...\"]}}\n\n{}",
+        req.project_context
+    );
+
+    let output_future = async {
+        use tokio::io::AsyncWriteExt;
+        let mut child = tokio::process::Command::new(&claude_path)
+            .arg("-p")
+            .arg("--model")
+            .arg("sonnet")
+            .arg("--output-format")
+            .arg("text")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()?;
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin.write_all(prompt.as_bytes()).await?;
+            stdin.shutdown().await?;
+        }
+        child.wait_with_output().await
+    };
+
+    let output = match output_future.await {
+        Ok(o) => o,
+        Err(e) => return Json(ApiResponse::error(format!("spawn failed: {e}"))),
+    };
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Json(ApiResponse::error(format!(
+            "claude exited non-zero: {stderr}"
+        )));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json_slice = match (stdout.find('{'), stdout.rfind('}')) {
+        (Some(start), Some(end)) if end > start => &stdout[start..=end],
+        _ => return Json(ApiResponse::error(format!("no JSON found in output: {stdout}"))),
+    };
+
+    let parsed: serde_json::Value = match serde_json::from_str(json_slice) {
+        Ok(v) => v,
+        Err(e) => return Json(ApiResponse::error(format!("JSON parse: {e}"))),
+    };
+
+    let title = parsed
+        .get("title")
+        .and_then(|s| s.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+
+    let suggestions: Vec<String> = parsed
+        .get("suggestions")
+        .and_then(|s| s.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if suggestions.is_empty() {
+        return Json(ApiResponse::error("no suggestions in response".into()));
+    }
+
+    Json(ApiResponse::success(SuggestionsResult {
+        title,
+        suggestions,
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+struct DiagramRequest {
+    project_context: String,
+    view: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct DiagramPosition {
+    x: f64,
+    y: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct DiagramProvenance {
+    #[serde(default)]
+    files: Vec<String>,
+    #[serde(default)]
+    functions: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct DiagramBlock {
+    id: String,
+    label: String,
+    #[serde(default)]
+    caption: String,
+    #[serde(default)]
+    parent: Option<String>,
+    position: DiagramPosition,
+    #[serde(default = "default_provenance")]
+    provenance: DiagramProvenance,
+}
+
+fn default_provenance() -> DiagramProvenance {
+    DiagramProvenance {
+        files: Vec::new(),
+        functions: Vec::new(),
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct DiagramArrow {
+    from: String,
+    to: String,
+    #[serde(default)]
+    label: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct DiagramSchema {
+    blocks: Vec<DiagramBlock>,
+    arrows: Vec<DiagramArrow>,
+}
+
+async fn generate_diagram(
+    Json(req): Json<DiagramRequest>,
+) -> Json<ApiResponse<DiagramSchema>> {
+    let started = std::time::Instant::now();
+    eprintln!(
+        "📐 /api/diagram view={} context_bytes={}",
+        req.view,
+        req.project_context.len()
+    );
+    let claude_path = match find_claude_binary_web() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("📐 ❌ claude binary not found: {e}");
+            return Json(ApiResponse::error(format!("claude binary not found: {e}")));
+        }
+    };
+
+    let (view_instructions, schema_example, model) = match req.view.as_str() {
+        "structure" => (
+            "VIEW: project structure layout. Identify 4–8 high-level architectural blocks \
+             (e.g. \"Backend API\", \"Auth handler\", \"Database layer\"). Each block can span \
+             multiple files. Use the `parent` field if some blocks naturally group under a larger \
+             module. Add arrows between blocks with short verb labels: \"calls\", \"imports\", \
+             \"renders\", \"queries\", \"reads from\", etc. For each block, populate `provenance.files` \
+             with the relevant file paths and `provenance.functions` with actual function/method \
+             names from those files (do NOT invent function names that aren't in the code).",
+            "{\n  \"blocks\": [\n    {\n      \"id\": \"unique_string\",\n      \"label\": \"display name\",\n      \"caption\": \"1-line role description\",\n      \"parent\": \"parent_block_id_or_null\",\n      \"position\": { \"x\": 0, \"y\": 0 },\n      \"provenance\": { \"files\": [\"path/to/file\"], \"functions\": [\"funcName\"] }\n    }\n  ],\n  \"arrows\": [\n    { \"from\": \"block_id\", \"to\": \"block_id\", \"label\": \"verb\" }\n  ]\n}",
+            "sonnet",
+        ),
+        other => {
+            return Json(ApiResponse::error(format!("unknown view: {other}")));
+        }
+    };
+
+    let prompt = format!(
+        "You are generating a structured diagram of a software project. {view_instructions}\n\n\
+LAYOUT RULES:\n\
+- Each block is rendered as a 160×80 rectangle.\n\
+- Place blocks in a clean top-to-bottom or left-to-right flow.\n\
+- Leave AT LEAST 200px between sibling block centers horizontally and 180px vertically. Generous spacing prevents arrows and their labels from overlapping other blocks.\n\
+- For child blocks (with `parent` set), position them BELOW and within the horizontal span of their parent.\n\
+- Top-level blocks start at y=0; depth-2 around y=200; depth-3 around y=400; etc.\n\
+- IMPORTANT: a straight line between any two arrow-connected blocks MUST NOT cross through another block's rectangle. Plan positions so arrow paths are clear.\n\
+- If one block has 3+ outgoing arrows, fan the targets out along an arc or row so the arrows don't bundle on top of each other.\n\
+- Avoid placing semantic arrow labels (the verbs in `arrows[].label`) where they would land on top of any block — that means avoiding mid-points of arrows that pass near other rectangles.\n\n\
+OUTPUT SCHEMA (JSON, no markdown fences, no prose):\n\
+{schema_example}\n\n\
+Output ONLY valid JSON. Use stable, readable ids derived from path or label (e.g. \"src_App_tsx\", \"backend_api\").\n\n\
+PROJECT:\n{}",
+        req.project_context
+    );
+
+    let output_future = async {
+        use tokio::io::AsyncWriteExt;
+        let mut child = tokio::process::Command::new(&claude_path)
+            .arg("-p")
+            .arg("--model")
+            .arg(model)
+            .arg("--output-format")
+            .arg("text")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()?;
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin.write_all(prompt.as_bytes()).await?;
+            stdin.shutdown().await?;
+        }
+        child.wait_with_output().await
+    };
+
+    let output =
+        match tokio::time::timeout(std::time::Duration::from_secs(90), output_future).await {
+            Ok(Ok(o)) => o,
+            Ok(Err(e)) => {
+                eprintln!("📐 ❌ spawn failed in {:?}: {e}", started.elapsed());
+                return Json(ApiResponse::error(format!("spawn failed: {e}")));
+            }
+            Err(_) => {
+                eprintln!(
+                    "📐 ❌ claude timed out after 90s ({:?} elapsed)",
+                    started.elapsed()
+                );
+                return Json(ApiResponse::error(
+                    "Claude took longer than 90 seconds. Try a smaller project or retry.".into(),
+                ));
+            }
+        };
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eprintln!(
+            "📐 ❌ claude exited non-zero in {:?}: {stderr}",
+            started.elapsed()
+        );
+        return Json(ApiResponse::error(format!(
+            "claude exited non-zero: {stderr}"
+        )));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json_slice = match (stdout.find('{'), stdout.rfind('}')) {
+        (Some(start), Some(end)) if end > start => &stdout[start..=end],
+        _ => {
+            eprintln!(
+                "📐 ❌ no JSON in claude output ({:?}): {stdout}",
+                started.elapsed()
+            );
+            return Json(ApiResponse::error(format!(
+                "no JSON found in output: {stdout}"
+            )));
+        }
+    };
+
+    match serde_json::from_str::<DiagramSchema>(json_slice) {
+        Ok(schema) => {
+            eprintln!(
+                "📐 ✅ {} blocks, {} arrows in {:?}",
+                schema.blocks.len(),
+                schema.arrows.len(),
+                started.elapsed()
+            );
+            Json(ApiResponse::success(schema))
+        }
+        Err(e) => {
+            eprintln!(
+                "📐 ❌ schema parse failed in {:?}: {e}\n--- raw json ---\n{json_slice}",
+                started.elapsed()
+            );
+            Json(ApiResponse::error(format!("schema parse: {e}")))
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
 struct ToolDispatchBody {
     name: String,
     #[serde(default)]
@@ -1575,6 +1880,10 @@ pub async fn create_web_server(
             "/api/conversations/{conversation_id}/messages",
             get(load_conversation_messages),
         )
+        // One-shot meta query: given goal + project context, ask Claude
+        // for 3 contextual starter prompts. Returns JSON; not streamed.
+        .route("/api/suggestions", axum::routing::post(generate_suggestions))
+        .route("/api/diagram", axum::routing::post(generate_diagram))
         // Internal: called by the tool-bridge subprocess via loopback only.
         // Protected by the per-spawn X-Tool-Bridge-Secret header.
         .route("/__tools/dispatch", axum::routing::post(tools_dispatch))
@@ -1589,6 +1898,7 @@ pub async fn create_web_server(
         // Serve static assets.
         .nest_service("/assets", ServeDir::new("../dist/assets"))
         .nest_service("/vite.svg", ServeDir::new("../dist/vite.svg"))
+        .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024))
         .layer(cors)
         .layer(axum::middleware::from_fn_with_state(
             cookies.clone(),

@@ -116,6 +116,13 @@ async function handleStreamingCommand<T>(
     const ws = new WebSocket(wsUrl);
     liveSessionSockets.set(clientSessionId, ws);
 
+    // Once the backend sends a `completion` message, we initiate a
+    // client-side close. Browsers can fire `onerror` / `onclose` with a
+    // non-1000 code in the trailing window of that handshake — surfacing
+    // those as errors would overwrite the success state we already
+    // dispatched. This flag suppresses the post-completion noise.
+    let settled = false;
+
     ws.onopen = () => {
       const request = {
         command_type: command.replace("_claude_code", ""),
@@ -147,8 +154,9 @@ async function handleStreamingCommand<T>(
             console.error("[apiAdapter] bad claude output content", e, msg.content);
           }
         } else if (msg.type === "completion") {
+          settled = true;
           dispatch("claude-complete", msg.status === "success", clientSessionId);
-          ws.close();
+          ws.close(1000, "completed");
           if (msg.status === "success") resolve({} as T);
           else reject(new Error(msg.error || "Execution failed"));
         } else if (msg.type === "error") {
@@ -176,6 +184,7 @@ async function handleStreamingCommand<T>(
     };
 
     ws.onerror = (err) => {
+      if (settled) return;
       console.error("[apiAdapter] WebSocket error", err);
       dispatch("claude-error", "WebSocket connection failed", clientSessionId);
       reject(new Error("WebSocket connection failed"));
@@ -183,6 +192,7 @@ async function handleStreamingCommand<T>(
 
     ws.onclose = (event) => {
       liveSessionSockets.delete(clientSessionId);
+      if (settled) return;
       // 1000/1001 are clean closes; anything else is an unexpected drop and
       // we surface that as a failed completion so UI state doesn't stick.
       if (event.code !== 1000 && event.code !== 1001) {

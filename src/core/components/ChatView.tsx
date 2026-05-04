@@ -1,11 +1,10 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import {
   useClaudeSession,
   type ClaudeMessage,
   type PendingToolCall,
 } from "@/core/hooks/useClaudeSession";
 import { PromptInput } from "@/core/components/PromptInput";
-import { ThemeToggle } from "@/core/components/ThemeToggle";
 import { ThinkingBubble } from "@/core/components/ThinkingBubble";
 import { Markdown } from "@/core/components/Markdown";
 import {
@@ -13,6 +12,8 @@ import {
   toolResultRegistry,
 } from "@/core/tools/registry";
 import { Button } from "@/components/ui/button";
+import { Bot, User, Upload } from "lucide-react";
+import { useProject, buildProjectContext, type FileEntry } from "@/core/project";
 
 /**
  * Default customer-facing chat view. Renders turns as bubbles, collapses
@@ -27,7 +28,33 @@ import { Button } from "@/components/ui/button";
  */
 export function ChatView({ model }: { model?: string }) {
   const session = useClaudeSession({ model });
+  const { files, goal, setGoal, chatTheme, setChatTheme } = useProject();
   const running = session.status === "running";
+
+  const hasFiles = files.length > 0;
+  const hasGoal = goal != null && goal.trim() !== "";
+
+  // "New chat" should reset the conversation AND the goal — different
+  // chats may pursue different goals on the same project.
+  const handleNewChat = () => {
+    session.reset();
+    setGoal(null);
+  };
+
+  // Wrap session.send so the first turn carries the project context as
+  // a system prompt — Claude reads it but it doesn't appear in the
+  // chat bubble. Subsequent turns rely on Claude's session memory for
+  // the same session-id; resending the full project on every turn
+  // would burn tokens with no benefit.
+  const handleSend = (prompt: string) => {
+    const isFirstTurn = session.messages.length === 0;
+    if (isFirstTurn && hasFiles && hasGoal) {
+      const context = buildProjectContext(files, goal);
+      session.send(prompt, { append_system_prompt: context });
+    } else {
+      session.send(prompt);
+    }
+  };
 
   const turns = useMemo(() => projectTurns(session.messages), [session.messages]);
 
@@ -121,24 +148,39 @@ export function ChatView({ model }: { model?: string }) {
   }, [turns.length, session.pendingToolCalls.length, running]);
 
   return (
-    <div className="mx-auto flex h-full w-full max-w-3xl flex-col">
-      <header className="flex items-center justify-between border-b px-4 py-2">
-        <div className="font-mono text-xs text-muted-foreground">
-          session {session.sessionId.slice(0, 8)} · {session.status}
+    <div className="flex h-full w-full flex-col bg-[#B7B0A7]/90 text-[#484848]">
+      <header className="flex h-11 items-center justify-between border-b border-[#484848]/30 bg-[#DFDEDE]/90 px-4">
+        <div className="text-sm font-medium text-[#484848]">
+          Chat Block
         </div>
-        <div className="flex items-center gap-1">
-          {turns.length > 0 && (
-            <Button variant="ghost" size="sm" onClick={session.reset}>
-              New chat
-            </Button>
-          )}
-          <ThemeToggle />
-        </div>
+        <button
+          onClick={handleNewChat}
+          className="rounded-full bg-[#888787]/75 px-3 py-1 text-xs text-white hover:bg-[#888787]/90"
+        >
+          New chat
+        </button>
       </header>
+      <div className="flex items-center px-4 py-2 text-xs text-[#484848]/70">
+        <span className="shrink-0">Session No. {session.sessionId.slice(0, 8)}</span>
+        <span className="mx-2 shrink-0">|</span>
+        <span className="shrink-0">Chat Theme:</span>
+        <span className="ml-1 truncate" title={goal ?? undefined}>
+          {chatTheme ?? (goal ? summarizeGoal(goal) : "—")}
+        </span>
+      </div>
 
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
-        {turns.length === 0 && (
-          <EmptyState suggestions={suggestionsFor(session)} onPick={session.send} />
+        {turns.length === 0 && !hasFiles && <NoProjectPrompt />}
+        {turns.length === 0 && hasFiles && !hasGoal && (
+          <GoalInput onSubmit={(text) => setGoal(text)} />
+        )}
+        {turns.length === 0 && hasFiles && hasGoal && (
+          <GoalSuggestions
+            goal={goal}
+            files={files}
+            onPick={handleSend}
+            onTitle={setChatTheme}
+          />
         )}
         {turns.map((t) => (
           <TurnBubble
@@ -166,9 +208,9 @@ export function ChatView({ model }: { model?: string }) {
       )}
 
       <PromptInput
-        onSubmit={session.send}
+        onSubmit={handleSend}
         onCancel={session.cancel}
-        disabled={running}
+        disabled={running || !hasGoal}
         running={running}
       />
     </div>
@@ -243,6 +285,21 @@ function projectTurns(messages: ClaudeMessage[]): Turn[] {
   return out;
 }
 
+function Avatar({ role }: { role: "user" | "assistant" }) {
+  if (role === "user") {
+    return (
+      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#484848] text-white">
+        <User size={14} />
+      </div>
+    );
+  }
+  return (
+    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#EAEAEA] text-[#484848]">
+      <Bot size={14} />
+    </div>
+  );
+}
+
 function TurnBubble({
   turn,
   pendingByToolUseId,
@@ -258,16 +315,18 @@ function TurnBubble({
 }) {
   if (turn.role === "user") {
     return (
-      <div className="flex justify-end">
-        <div className="max-w-[80%] rounded-2xl bg-primary px-4 py-2 text-sm text-primary-foreground">
+      <div className="flex items-start justify-end gap-2">
+        <div className="max-w-[80%] rounded-3xl bg-[#484848] px-4 py-2 text-sm text-white">
           {turn.text}
         </div>
+        <Avatar role="user" />
       </div>
     );
   }
   return (
-    <div className="flex justify-start">
-      <div className="w-full max-w-[85%] space-y-2 rounded-2xl bg-muted px-4 py-3 text-sm">
+    <div className="flex items-start justify-start gap-2">
+      <Avatar role="assistant" />
+      <div className="w-full max-w-[85%] space-y-2 rounded-2xl bg-[#EAEAEA] px-4 py-3 text-sm text-[#484848]">
         {turn.blocks.map((b, i) => (
           <AssistantBlockView
             key={i}
@@ -411,137 +470,192 @@ function parseToolResultContent(raw: unknown): {
   }
 }
 
-function EmptyState({
-  suggestions,
-  onPick,
-}: {
-  suggestions: string[];
-  onPick: (prompt: string) => void;
-}) {
+/**
+ * Step 1 of the chat onboarding flow: shown when no project has been
+ * uploaded yet. The chat is effectively gated until files arrive.
+ */
+function NoProjectPrompt() {
   return (
-    <div className="mx-auto flex w-full max-w-2xl flex-col gap-6 py-8">
-      <div className="space-y-1 text-center">
-        <h1 className="text-2xl font-semibold tracking-tight">
-          Claude UI Template
-        </h1>
-        <p className="text-sm text-muted-foreground">
-          A chat where Claude calls your tools and your React components render
-          the results.
+    <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-sm text-[#484848]/70">
+      <Upload size={28} className="opacity-50" />
+      <p>Upload a project in the Files panel to begin.</p>
+    </div>
+  );
+}
+
+/**
+ * Step 2: a project is loaded but the user hasn't told us what they're
+ * trying to do. Capture a one-sentence goal — that becomes the chat
+ * theme and seeds personalized starter prompts.
+ */
+function GoalInput({ onSubmit }: { onSubmit: (text: string) => void }) {
+  const [text, setText] = useState("");
+  const submit = () => {
+    const trimmed = text.trim();
+    if (trimmed) onSubmit(trimmed);
+  };
+  const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      submit();
+    }
+  };
+  return (
+    <div className="flex h-full items-center justify-center pb-16">
+      <div className="w-full max-w-md rounded-2xl bg-white/40 p-5">
+        <h3 className="mb-1 text-sm font-medium text-[#484848]">
+          What's your primary goal?
+        </h3>
+        <p className="mb-4 text-xs text-[#484848]/70">
+          One sentence is enough! We'll use it to tailor the conversation and the starter prompts below.
         </p>
-      </div>
-
-      <div className="grid gap-3 sm:grid-cols-3">
-        <ExplainCard
-          title="Server tools"
-          body="Rust handlers Claude invokes over MCP. Declare the schema + handler in one place."
-          file="backend/src/main.rs"
-          example="b.server_tool(&quot;get_weather&quot;, …)"
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={onKeyDown}
+          placeholder="e.g. add a dark mode toggle to the settings page"
+          rows={3}
+          className="mb-3 w-full resize-none rounded-lg border border-[#484848]/15 bg-white/80 p-2 text-sm text-[#484848] placeholder:text-[#484848]/40 outline-none"
         />
-        <ExplainCard
-          title="Client tools"
-          body="React components that render inline in chat. resolve(value) returns a tool result."
-          file="src/main.tsx"
-          example="registerClientTool(&quot;show_choice&quot;, ShowChoice)"
-        />
-        <ExplainCard
-          title="Chat shell"
-          body="This view. Owns the WebSocket session, streams stream-json into bubbles."
-          file="src/core/components/ChatView.tsx"
-          example="const s = useClaudeSession()"
-        />
+        <button
+          onClick={submit}
+          disabled={!text.trim()}
+          className="w-full rounded-full bg-[#3d3a35] px-4 py-2 text-xs text-white hover:bg-[#2a2724] disabled:opacity-40"
+        >
+          Continue
+        </button>
       </div>
+    </div>
+  );
+}
 
-      <div className="rounded-lg border bg-card p-4 text-sm">
-        <div className="mb-2 font-medium">How a turn flows</div>
-        <ol className="list-decimal space-y-1 pl-5 text-muted-foreground">
-          <li>You send a prompt from the input below.</li>
-          <li>
-            Backend spawns <code className="font-mono text-xs">claude</code>{" "}
-            with <code className="font-mono text-xs">--mcp-config</code>{" "}
-            pointing at <code className="font-mono text-xs">tool-bridge</code>.
-          </li>
-          <li>
-            Claude decides to call a tool. Server tools run in Rust; client
-            tools round-trip to this browser.
-          </li>
-          <li>
-            Stream-json flows back over WebSocket and renders as bubbles
-            (text, thinking, tool_use, tool_result).
-          </li>
-        </ol>
-      </div>
+/**
+ * Step 3: goal captured, no conversation yet. Render a few starter
+ * prompts that incorporate the user's goal verbatim. Phase 1 uses
+ * static templates; Phase 2 will replace this with Claude-generated
+ * suggestions seeded by goal + project tree.
+ */
+type SuggestionsState =
+  | { kind: "loading" }
+  | { kind: "ready"; suggestions: string[] }
+  | { kind: "error"; message: string };
 
-      <div className="flex flex-col gap-2">
-        <div className="text-center text-xs uppercase tracking-wide text-muted-foreground">
-          Try a prompt
-        </div>
-        <div className="flex flex-col gap-2">
-          {suggestions.map((s) => (
+function GoalSuggestions({
+  goal,
+  files,
+  onPick,
+  onTitle,
+}: {
+  goal: string;
+  files: FileEntry[];
+  onPick: (prompt: string) => void;
+  onTitle: (title: string) => void;
+}) {
+  const [state, setState] = useState<SuggestionsState>({ kind: "loading" });
+
+  // Mount-only: fire one request to /api/suggestions with the project
+  // context + goal. Returns both a chat-theme title and 3 starter
+  // suggestions in one round-trip — the title is reported up to the
+  // ProjectContext via onTitle.
+  useEffect(() => {
+    let cancelled = false;
+    setState({ kind: "loading" });
+
+    const projectContext = buildProjectContext(files, goal);
+
+    fetch("/api/suggestions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ project_context: projectContext }),
+    })
+      .then((r) => r.json())
+      .then((res) => {
+        if (cancelled) return;
+        if (
+          res.success &&
+          res.data &&
+          Array.isArray(res.data.suggestions) &&
+          res.data.suggestions.length > 0
+        ) {
+          if (typeof res.data.title === "string" && res.data.title) {
+            onTitle(res.data.title);
+          }
+          setState({ kind: "ready", suggestions: res.data.suggestions });
+        } else {
+          setState({
+            kind: "error",
+            message: res.error || "No suggestions returned",
+          });
+        }
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setState({ kind: "error", message: String(e) });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+    // We snapshot files+goal at mount; refiring on every keystroke would
+    // be wasteful and disorienting.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <div className="flex h-full items-center justify-center pb-16">
+      <div className="flex w-full max-w-md flex-col gap-2 rounded-2xl bg-white/40 p-5">
+        <p className="mb-1 text-xs text-[#484848]/70">
+          {state.kind === "loading"
+            ? "Generating suggestions based on your project…"
+            : state.kind === "error"
+              ? "Couldn't generate suggestions"
+              : "Suggested starting prompts:"}
+        </p>
+        {state.kind === "loading" && <SuggestionSkeleton />}
+        {state.kind === "ready" &&
+          state.suggestions.map((s) => (
             <Button
               key={s}
               variant="outline"
               size="sm"
-              className="justify-start"
+              className="h-auto justify-start whitespace-normal py-2 text-left"
               onClick={() => onPick(s)}
             >
               {s}
             </Button>
           ))}
-        </div>
-        <p className="text-center text-xs text-muted-foreground">
-          Suggestions exercise the three example tools:{" "}
-          <code className="font-mono">get_weather</code> (server),{" "}
-          <code className="font-mono">show_choice</code> (client), and the{" "}
-          <code className="font-mono">search_flights</code> +{" "}
-          <code className="font-mono">show_flight_options</code> pair
-          (server → client).
-        </p>
-      </div>
-
-      <div className="border-t pt-4 text-center text-xs text-muted-foreground">
-        Edit <code className="font-mono">src/App.tsx</code> and save — Vite HMR
-        reloads instantly. See{" "}
-        <code className="font-mono">docs/tools.md</code> for the full tool
-        guide, <code className="font-mono">CLAUDE.md</code> for architecture.
+        {state.kind === "error" && (
+          <p className="text-xs text-red-700/80">{state.message}</p>
+        )}
       </div>
     </div>
   );
 }
 
-function ExplainCard({
-  title,
-  body,
-  file,
-  example,
-}: {
-  title: string;
-  body: string;
-  file: string;
-  example: string;
-}) {
+function SuggestionSkeleton() {
   return (
-    <div className="flex flex-col gap-2 rounded-lg border bg-card p-3 text-left">
-      <div className="text-sm font-medium">{title}</div>
-      <p className="text-xs text-muted-foreground">{body}</p>
-      <div className="mt-auto space-y-1">
-        <div className="truncate font-mono text-[11px] text-muted-foreground">
-          {file}
-        </div>
-        <pre className="overflow-x-auto rounded bg-muted/60 p-1.5 font-mono text-[11px] leading-snug">
-          {example}
-        </pre>
-      </div>
+    <div className="flex flex-col gap-2">
+      <div className="h-9 w-full animate-pulse rounded-md bg-[#484848]/10" />
+      <div className="h-9 w-full animate-pulse rounded-md bg-[#484848]/10" />
+      <div className="h-9 w-full animate-pulse rounded-md bg-[#484848]/10" />
     </div>
   );
 }
 
-// One suggestion per shipped reference tool / tool-pair. A fork that
-// swaps the registry should swap these too so the empty state stays
-// useful.
-function suggestionsFor(_: ReturnType<typeof useClaudeSession>): string[] {
-  return [
-    "What's the weather like in Tokyo?",
-    "Help me pick a color for a new website: blue, green, or purple.",
-    "Find me flights from SFO to Tokyo on 2026-05-10.",
-  ];
+/**
+ * Compress a goal sentence into a chat-theme label that fits in the
+ * header strip. First ~5 words capped at ~35 chars; the full goal is
+ * available on hover via the `title` attribute.
+ */
+function summarizeGoal(goal: string): string {
+  const trimmed = goal.trim();
+  const words = trimmed.split(/\s+/);
+  let acc = "";
+  for (let i = 0; i < Math.min(words.length, 5); i++) {
+    const next = acc ? `${acc} ${words[i]}` : words[i];
+    if (next.length > 35) break;
+    acc = next;
+  }
+  return acc.length < trimmed.length ? `${acc}…` : acc;
 }
+

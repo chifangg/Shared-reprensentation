@@ -34,22 +34,30 @@ export function PromptInput({
   };
 
   return (
-    <div className="flex items-end gap-2 border-t p-3">
+    <div className="flex items-center gap-2 bg-[#D9D9D9] p-3">
       <textarea
-        className="flex-1 resize-none rounded border bg-background p-2 text-sm outline-none focus:ring-1 focus:ring-ring"
-        placeholder={running ? "Streaming… (Shift+Enter for newline)" : "Ask Claude something… (Enter to send)"}
-        rows={3}
+        className="flex-1 resize-none rounded-full bg-[#EAEAEA] px-4 py-2 text-sm text-[#484848] placeholder:text-[#979595] outline-none border-0"
+        placeholder={running ? "Streaming…" : "Type to ask…"}
+        rows={1}
         value={value}
         disabled={disabled}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={onKey}
       />
       {running && onCancel ? (
-        <Button variant="destructive" onClick={onCancel}>
+        <Button
+          variant="destructive"
+          onClick={onCancel}
+          className="rounded-full"
+        >
           Cancel
         </Button>
       ) : (
-        <Button onClick={submit} disabled={disabled || !value.trim()}>
+        <Button
+          onClick={submit}
+          disabled={disabled || !value.trim()}
+          className="rounded-full bg-[#212121]/75 text-white hover:bg-[#212121]/90"
+        >
           Send
         </Button>
       )}

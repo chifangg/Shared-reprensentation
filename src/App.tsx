@@ -1,4 +1,5 @@
-import { ChatView } from "@/core/components/ChatView";
+import { AppShell } from "@/core/components/AppShell";
+import { ProjectProvider } from "@/core/project";
 
 /**
  * Bare-template shell for customer-facing Claude-powered apps.
@@ -21,8 +22,8 @@ import { ChatView } from "@/core/components/ChatView";
  */
 export default function App() {
   return (
-    <div className="flex h-screen flex-col bg-background text-foreground">
-      <ChatView />
-    </div>
+    <ProjectProvider>
+      <AppShell />
+    </ProjectProvider>
   );
 }
