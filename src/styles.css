@@ -288,10 +288,69 @@ button:focus-visible,
   }
 }
 
+.panels-animating [data-panel] {
+  transition: flex-basis 280ms ease-in-out, flex-grow 280ms ease-in-out;
+}
+
+@keyframes block-grow {
+  from {
+    opacity: 0;
+    transform: scale(0.6) translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.block-node-grow {
+  animation: block-grow 380ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+  transform-origin: center center;
+}
+
+.react-flow__node {
+  transition: transform 350ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.react-flow__node.dragging,
+.react-flow__node.selected.dragging {
+  transition: none;
+}
+
+.react-flow__node.selected {
+  z-index: 10 !important;
+}
+
 @keyframes loading-bar {
   0%   { transform: translateX(-100%); }
   50%  { transform: translateX(150%); }
   100% { transform: translateX(-100%); }
+}
+
+@keyframes panel-slide-in {
+  from { transform: translateX(100%); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+
+.panel-slide-in {
+  animation: panel-slide-in 280ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes focus-pulse {
+  0%, 100% {
+    box-shadow:
+      0 0 0 0 rgba(245, 158, 11, 0.0),
+      0 0 0 6px rgba(245, 158, 11, 0.18);
+  }
+  50% {
+    box-shadow:
+      0 0 0 4px rgba(245, 158, 11, 0.10),
+      0 0 0 10px rgba(245, 158, 11, 0.22);
+  }
+}
+
+.focus-pulse {
+  animation: focus-pulse 1.6s ease-in-out infinite;
 }
 
 /* Prose styles for markdown rendering */
@@ -544,4 +603,66 @@ code::-webkit-scrollbar-thumb {
 pre::-webkit-scrollbar-thumb:hover,
 code::-webkit-scrollbar-thumb:hover {
   background-color: rgba(156, 163, 175, 0.6);
+}
+
+.prose-invert {
+  color: #E5E5E5;
+}
+
+.prose-invert h1,
+.prose-invert h2,
+.prose-invert h3,
+.prose-invert h4,
+.prose-invert h5,
+.prose-invert h6 {
+  color: #F5F5F5;
+}
+
+.prose-invert strong {
+  color: #F5F5F5;
+}
+
+.prose-invert a {
+  color: #7B96E8;
+}
+
+.prose-invert code {
+  background-color: #242424;
+  color: #E5E5E5;
+}
+
+.prose-invert pre {
+  background-color: #0A0A0A;
+  border: 1px solid #2A2A2A;
+  color: #E5E5E5;
+}
+
+.prose-invert pre code {
+  color: inherit;
+  background-color: transparent;
+}
+
+.prose-invert blockquote {
+  color: #AAAAAA;
+  border-left-color: #2A2A2A;
+}
+
+.prose-invert hr {
+  border-color: #2A2A2A;
+}
+
+.prose-invert thead {
+  border-bottom-color: #2A2A2A;
+}
+
+.prose-invert thead th {
+  color: #F5F5F5;
+}
+
+.prose-invert tbody tr {
+  border-bottom-color: #1F1F1F;
+}
+
+.prose-invert li::marker {
+  color: #666666;
 }

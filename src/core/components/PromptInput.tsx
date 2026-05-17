@@ -1,11 +1,5 @@
 import { useState, type KeyboardEvent } from "react";
-import { Button } from "@/components/ui/button";
 
-/**
- * Tiny prompt composer. Enter submits; Shift+Enter inserts a newline.
- * Deliberately bare — forks add slash-command pickers, file pickers, model
- * selectors, etc. by wrapping or replacing this component.
- */
 export function PromptInput({
   onSubmit,
   onCancel,
@@ -34,10 +28,10 @@ export function PromptInput({
   };
 
   return (
-    <div className="flex items-center gap-2 bg-[#D9D9D9] p-3">
+    <div className="flex items-end gap-2 border-t border-[#2A2A2A] bg-[#141414] p-3">
       <textarea
-        className="flex-1 resize-none rounded-full bg-[#EAEAEA] px-4 py-2 text-sm text-[#484848] placeholder:text-[#979595] outline-none border-0"
-        placeholder={running ? "Streaming…" : "Type to ask…"}
+        className="flex-1 resize-none rounded-md border border-[#2A2A2A] bg-[#0F0F0F] px-3 py-2 text-sm text-[#E5E5E5] placeholder:text-[#555555] outline-none focus:border-[#3B5BD9]/50 disabled:opacity-60"
+        placeholder={running ? "Streaming…" : "Type a message…"}
         rows={1}
         value={value}
         disabled={disabled}
@@ -45,21 +39,22 @@ export function PromptInput({
         onKeyDown={onKey}
       />
       {running && onCancel ? (
-        <Button
-          variant="destructive"
+        <button
+          type="button"
           onClick={onCancel}
-          className="rounded-full"
+          className="rounded-md border border-red-500/40 bg-red-500/15 px-3 py-2 text-xs font-medium text-red-300 transition-colors hover:bg-red-500/25"
         >
           Cancel
-        </Button>
+        </button>
       ) : (
-        <Button
+        <button
+          type="button"
           onClick={submit}
           disabled={disabled || !value.trim()}
-          className="rounded-full bg-[#212121]/75 text-white hover:bg-[#212121]/90"
+          className="rounded-md border border-[#2A2A2A] bg-[#242424] px-4 py-2 text-xs font-medium text-[#E5E5E5] transition-colors hover:bg-[#2F2F2F] disabled:opacity-40 disabled:hover:bg-[#242424]"
         >
           Send
-        </Button>
+        </button>
       )}
     </div>
   );

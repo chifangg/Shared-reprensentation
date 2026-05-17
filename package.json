@@ -13,8 +13,10 @@
     "backend:release": "cd backend && cargo build --release"
   },
   "dependencies": {
+    "@dagrejs/dagre": "^3.0.0",
     "@excalidraw/excalidraw": "^0.18.1",
     "@tailwindcss/vite": "^4.1.8",
+    "@xyflow/react": "^12.10.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "jszip": "^3.10.1",

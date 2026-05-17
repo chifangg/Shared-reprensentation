@@ -82,6 +82,10 @@ type ProjectContextValue = {
   setUploading: (v: boolean) => void;
   uploadProgress: number;
   setUploadProgress: (v: number) => void;
+  chatMessages: import("@/core/hooks/useClaudeSession").ClaudeMessage[];
+  setChatMessages: (
+    msgs: import("@/core/hooks/useClaudeSession").ClaudeMessage[],
+  ) => void;
 };
 
 const ProjectContext = createContext<ProjectContextValue | null>(null);
@@ -95,6 +99,9 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const [chatTheme, setChatThemeState] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [chatMessages, setChatMessages] = useState<
+    import("@/core/hooks/useClaudeSession").ClaudeMessage[]
+  >([]);
 
   const activeFile = useMemo(
     () => files.find((f) => f.path === activePath) ?? null,
@@ -144,11 +151,18 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const updateFileContent = useCallback((path: string, content: string) => {
-    setFiles((prev) =>
-      prev.map((f) =>
-        f.path === path ? { ...f, content, size: content.length } : f,
-      ),
-    );
+    setFiles((prev) => {
+      const idx = prev.findIndex((f) => f.path === path);
+      if (idx >= 0) {
+        return prev.map((f, i) =>
+          i === idx ? { ...f, content, size: content.length } : f,
+        );
+      }
+      // Path doesn't exist yet — let Claude (via write_project_file) or
+      // the code editor create new files by writing to a fresh path.
+      const name = path.split("/").pop() ?? path;
+      return [...prev, { path, name, content, size: content.length }];
+    });
   }, []);
 
   const toggleHighlight = useCallback(() => {
@@ -186,6 +200,8 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
         setUploading,
         uploadProgress,
         setUploadProgress,
+        chatMessages,
+        setChatMessages,
       }}
     >
       {children}
@@ -629,8 +645,8 @@ export function buildProjectContext(
     .sort()
     .join("\n");
 
-  const PER_FILE_CAP = 8 * 1024;
-  const TOTAL_CAP = 400 * 1024;
+  const PER_FILE_CAP = 16 * 1024;
+  const TOTAL_CAP = 80 * 1024;
 
   let totalSoFar = 0;
   const fileBlocks = files
@@ -659,6 +675,54 @@ export function buildProjectContext(
     : "";
 
   return `<project_context>\n<tree>\n${tree}\n</tree>\n\n${fileBlocks}${goalBlock}\n</project_context>`;
+}
+
+/**
+ * Lighter project context for the chat path. Instead of dumping every
+ * file's contents up-front (which hits per-file and total caps for
+ * realistic-size repos), we hand Claude the file tree only and rely on
+ * the `read_project_file` client tool to fetch bodies on demand. This
+ * keeps the input small + accurate even for large uploads, and stops
+ * the model from confabulating about files it never actually saw.
+ */
+export function buildChatSystemPrompt(
+  files: FileEntry[],
+  goal: string | null,
+): string {
+  const tree = files
+    .map((f) => `${f.path}  (${f.size} bytes)`)
+    .sort()
+    .join("\n");
+  const goalBlock = goal
+    ? `\n\n<user_goal>\n${goal}\n</user_goal>`
+    : "";
+
+  return [
+    "You are a code-explanation and code-editing assistant for a project the user uploaded into the browser.",
+    "",
+    "Below is the full file tree of the uploaded project. You have three tools:",
+    "  • `read_project_file(path)` — fetch a file's full contents.",
+    "  • `edit_project_file(path, old_string, new_string, replace_all?)` — replace one substring with another in place. PREFERRED for small edits — much faster than rewriting the whole file.",
+    "  • `write_project_file(path, content)` — overwrite a file (or create a new one) with the given full body. Use only for new files or when changing most of a file.",
+    "",
+    "Rules:",
+    "  1. To inspect a file, call `read_project_file` with one of the listed paths exactly. Do NOT guess at file contents.",
+    "  2. Every path you read or write MUST begin with one of the top-level folders listed in <project_tree>. Never use `../`, absolute paths, or paths outside that tree. The only files that exist are the ones in <project_tree> — anything else (your harness source, this assistant's own UI, etc.) is unreachable and irrelevant.",
+    "  3. Only edit after the user has clearly asked for a change. Never edit speculatively.",
+    "  4. Always `read_project_file` an existing file before editing it. For `edit_project_file`, `old_string` must match the file exactly (including indentation) and must be unique — include a few surrounding lines as context if needed.",
+    "  5. PREFER `edit_project_file` whenever the change touches less than roughly half the file. Reserve `write_project_file` for creating new files or full rewrites — re-emitting a 30KB body for a 1-line change wastes ~15 seconds per edit.",
+    "  6. After a successful change, summarize what changed in 1–2 sentences. Do not paste the new file back in chat.",
+    "  7. Do NOT call any other tool. There are no shell, search, weather, or flight tools — ignore memories of those from other sessions.",
+    "",
+    "Be concise. Read only the files you actually need. Ground explanations in concrete function names from what you read.",
+    "",
+    `<project_tree count="${files.length}">`,
+    tree,
+    "</project_tree>",
+    goalBlock,
+  ]
+    .filter((s) => s !== "")
+    .join("\n");
 }
 
 

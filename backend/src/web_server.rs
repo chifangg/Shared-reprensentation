@@ -1,8 +1,9 @@
+use axum::body::Body;
 use axum::extract::ws::{Message, WebSocket};
-use axum::http::Method;
+use axum::http::{header, Method};
 use axum::{
     extract::{Path, State as AxumState, WebSocketUpgrade},
-    response::{Html, Json, Response},
+    response::{Html, IntoResponse, Json, Response},
     routing::get,
     Router,
 };
@@ -416,6 +417,10 @@ no prose, no explanation:\n\
 struct DiagramRequest {
     project_context: String,
     view: String,
+    #[serde(default)]
+    chat_context: Option<String>,
+    #[serde(default)]
+    base_schema: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -440,7 +445,8 @@ struct DiagramBlock {
     caption: String,
     #[serde(default)]
     parent: Option<String>,
-    position: DiagramPosition,
+    #[serde(default)]
+    position: Option<DiagramPosition>,
     #[serde(default = "default_provenance")]
     provenance: DiagramProvenance,
 }
@@ -466,138 +472,517 @@ struct DiagramSchema {
     arrows: Vec<DiagramArrow>,
 }
 
-async fn generate_diagram(
-    Json(req): Json<DiagramRequest>,
-) -> Json<ApiResponse<DiagramSchema>> {
+/// System prompt for the "structure" view. Static across calls so it
+/// participates in prompt caching when paired with `cache_control` below.
+const STRUCTURE_SYSTEM: &str = "You are generating a structured diagram of a software project. \
+VIEW: project structure layout. Identify 5–8 high-level architectural blocks (e.g. \"Backend API\", \"Auth handler\", \"Database layer\"). \
+Each block can span multiple files. Use the `parent` field if some blocks naturally group under a larger module. \
+Add arrows between blocks with short verb labels: \"calls\", \"imports\", \"renders\", \"queries\", \"reads from\", etc. \
+For each block, populate provenance.files with the relevant file paths and provenance.functions with actual function/method names from those files (do NOT invent function names that aren't in the code).\n\n\
+RULES:\n\
+- Use as many blocks as you need to faithfully represent the project's architecture. Typically 5–10 is reasonable.\n\
+- Use stable readable ids derived from label (e.g. \"backend_api\", \"auth_handler\").\n\
+- Caption is one short sentence describing what the block does.\n\
+\n\
+ARROW RULES — accuracy over completeness:\n\
+- Emit an arrow ONLY when you can point to an actual import, function call, HTTP/WS request, message-passing, or data-flow that exists in the file contents above. If you cannot justify the arrow from the code, do NOT emit it.\n\
+- It is fine for some blocks to be isolated (no arrows in or out) if they genuinely stand alone in the code — an orphan block is more honest than an invented connection.\n\
+- At most ONE arrow per (from, to) pair. Do not emit duplicate arrows between the same two blocks.\n\
+- Each arrow's `label` must be a 1–2 word verb that describes the specific relationship (e.g. \"imports\", \"calls\", \"renders\", \"queries\", \"streams to\"). Labels across different arrows should be DISTINCT — don't reuse the same verb for unrelated relationships.\n\
+- Do not target an arrow count; emit exactly the arrows that match real dependencies, whether that's 3 or 12.\n\n\
+Emit each block by calling the `block` tool and each arrow by calling the `arrow` tool. After all blocks and arrows have been emitted, call the `done` tool exactly once.\n\n\
+EMISSION PROTOCOL — IMPORTANT:\n\
+- Emit ALL of your tool calls in a SINGLE assistant response (parallel tool calls). Do not stop after one tool call to wait for results.\n\
+- Every tool_result you get back will simply be \"ok\" — there is no information to wait for. The tool calls are how you write your output; they are not interactive queries.\n\
+- A correct response for this view is approximately 5-10 `block` calls + 5-9 `arrow` calls + 1 `done` call, ALL in the same response.";
+
+/// System prompt for the "focus" view.
+const FOCUS_SYSTEM: &str = "You are computing an ADAPTIVE FOCUS overlay for an existing project diagram. \
+The user is in the middle of a conversation about this project (RECENT CHAT in the user message) \
+and you are given the existing high-level overview blocks (EXISTING OVERVIEW BLOCKS in the user message).\n\n\
+Your job is TWO things:\n\
+1. Identify which existing overview blocks the conversation is about — call the `focus` tool once with their ids.\n\
+2. Generate 2–5 NEW detail sub-blocks (via the `detail_block` tool) that explain the conversational topic in more depth. \
+Each detail block has `parent` pointing to one of the existing overview block ids. Detail blocks should be specific to what the user is asking about \
+(e.g. if the conversation is about login, detail blocks might be \"Password hashing\", \"JWT issuance\", \"Session storage\").\n\n\
+RULES:\n\
+- DO NOT regenerate the overview blocks — they already exist and stay. Only call focus, detail_block, and detail_arrow.\n\
+- Detail block `parent` MUST be an existing overview block id from the EXISTING OVERVIEW BLOCKS list.\n\
+- Detail blocks may have arrows BETWEEN themselves (use detail_arrow). Skip arrows back up to overview blocks.\n\
+- Caption is one short sentence; populate provenance.files and provenance.functions where applicable.\n\
+- Use ids prefixed with \"detail_\" (e.g. \"detail_jwt_issuance\") to avoid colliding with overview ids.\n\n\
+Order: call `focus` first, then each `detail_block`, then each `detail_arrow`, then call `done` exactly once.\n\n\
+EMISSION PROTOCOL — IMPORTANT:\n\
+- Emit ALL of your tool calls in a SINGLE assistant response (parallel tool calls). Do not stop after one tool call to wait for results.\n\
+- Every tool_result you get back will simply be \"ok\" — there is no information to wait for. The tool calls are how you write your output; they are not interactive queries.";
+
+fn block_input_schema() -> serde_json::Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "id": { "type": "string", "minLength": 1, "description": "Stable readable id derived from the label, e.g. \"backend_api\"." },
+            "label": { "type": "string", "minLength": 1, "description": "Short display name." },
+            "caption": { "type": "string", "description": "One-sentence description of what the block does." },
+            "parent": { "type": ["string", "null"], "description": "Parent block id, or null for top-level blocks." },
+            "provenance": {
+                "type": "object",
+                "properties": {
+                    "files": { "type": "array", "items": { "type": "string" } },
+                    "functions": { "type": "array", "items": { "type": "string" } }
+                },
+                "required": ["files", "functions"]
+            }
+        },
+        "required": ["id", "label", "caption", "provenance"]
+    })
+}
+
+fn arrow_input_schema() -> serde_json::Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "from": { "type": "string", "minLength": 1, "description": "Source block id." },
+            "to": { "type": "string", "minLength": 1, "description": "Destination block id." },
+            "label": { "type": "string", "minLength": 1, "description": "1–2 word verb describing the actual relationship (e.g. \"imports\", \"calls\", \"renders\")." }
+        },
+        "required": ["from", "to", "label"]
+    })
+}
+
+fn empty_input_schema() -> serde_json::Value {
+    json!({ "type": "object", "properties": {} })
+}
+
+fn structure_tools() -> Vec<serde_json::Value> {
+    vec![
+        json!({
+            "name": "block",
+            "description": "Emit one architecture block in the diagram.",
+            "input_schema": block_input_schema(),
+        }),
+        json!({
+            "name": "arrow",
+            "description": "Emit one arrow between two blocks.",
+            "input_schema": arrow_input_schema(),
+        }),
+        json!({
+            "name": "done",
+            "description": "Signal that all blocks and arrows have been emitted.",
+            "input_schema": empty_input_schema(),
+        }),
+    ]
+}
+
+fn focus_tools() -> Vec<serde_json::Value> {
+    vec![
+        json!({
+            "name": "focus",
+            "description": "Identify which existing overview block ids the conversation is about.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "ids": { "type": "array", "items": { "type": "string" } }
+                },
+                "required": ["ids"]
+            },
+        }),
+        json!({
+            "name": "detail_block",
+            "description": "Emit one detail sub-block under an existing overview block.",
+            "input_schema": block_input_schema(),
+        }),
+        json!({
+            "name": "detail_arrow",
+            "description": "Emit one arrow between two detail blocks.",
+            "input_schema": arrow_input_schema(),
+        }),
+        json!({
+            "name": "done",
+            "description": "Signal that focus, detail_block, and detail_arrow tool calls are complete.",
+            "input_schema": empty_input_schema(),
+        }),
+    ]
+}
+
+/// Build the request body for the Anthropic Messages API.
+///
+/// The project context goes into the first user content block with
+/// `cache_control: ephemeral` so back-to-back diagram requests against
+/// the same uploaded project hit the prompt cache. The variable parts
+/// (chat snippet, existing overview blocks) live in a second content
+/// block so they don't invalidate the cache on every call.
+/// Build the initial user message for the diagram conversation. The
+/// project context is in its own content block tagged with
+/// `cache_control: ephemeral` so subsequent turns (within 5 min) hit
+/// the prompt cache and only re-pay for the conversation tail.
+fn build_initial_user_content(
+    project_context: &str,
+    chat_block: &str,
+    base_block: &str,
+) -> Vec<serde_json::Value> {
+    let variable_tail = format!("{}{}", base_block, chat_block);
+    let mut user_content = vec![json!({
+        "type": "text",
+        "text": format!("PROJECT:\n{}", project_context),
+        "cache_control": { "type": "ephemeral" }
+    })];
+    if !variable_tail.is_empty() {
+        user_content.push(json!({ "type": "text", "text": variable_tail }));
+    }
+    user_content
+}
+
+/// Assemble one Anthropic API request body. The view picks system
+/// prompt + tool set; `messages` is the growing conversation
+/// (initial user message, then assistant+tool_result pairs).
+fn build_diagram_body(
+    view: &str,
+    messages: &[serde_json::Value],
+) -> Option<serde_json::Value> {
+    let (system_text, tools) = match view {
+        "structure" => (STRUCTURE_SYSTEM, structure_tools()),
+        "focus" => (FOCUS_SYSTEM, focus_tools()),
+        _ => return None,
+    };
+
+    Some(json!({
+        "model": "claude-sonnet-4-6",
+        "max_tokens": 16000,
+        "stream": true,
+        "system": [
+            { "type": "text", "text": system_text, "cache_control": { "type": "ephemeral" } }
+        ],
+        "messages": messages,
+        "tools": tools,
+        // `disable_parallel_tool_use: false` is the API default, but
+        // make it explicit — the agentic loop only pays off if the
+        // model is actually willing to emit many tool_use blocks in a
+        // single response.
+        "tool_choice": { "type": "any", "disable_parallel_tool_use": false }
+    }))
+}
+
+/// Translate a streamed tool_use call into the NDJSON line shape the
+/// frontend already consumes (`{kind, data}` for most tools, `{kind:
+/// "focus", ids: [...]}` for the focus tool, and `{kind: "done"}` for
+/// the terminator).
+fn tool_use_to_ndjson(name: &str, input: serde_json::Value) -> serde_json::Value {
+    match name {
+        "focus" => json!({
+            "kind": "focus",
+            "ids": input.get("ids").cloned().unwrap_or_else(|| json!([]))
+        }),
+        "done" => json!({ "kind": "done" }),
+        other => json!({ "kind": other, "data": input }),
+    }
+}
+
+/// Max conversation turns before we give up. Each turn = one round-trip
+/// to Anthropic. Cache makes the per-turn token cost negligible after
+/// the first one, so the real budget here is wall-clock time (~3-4s per
+/// turn). 30 is enough to cover Sonnet 4.6 in its most serial mood
+/// (one tool_use per turn) without burning forever on a broken loop.
+const MAX_DIAGRAM_TURNS: usize = 30;
+
+async fn generate_diagram(Json(req): Json<DiagramRequest>) -> Response {
     let started = std::time::Instant::now();
     eprintln!(
         "📐 /api/diagram view={} context_bytes={}",
         req.view,
         req.project_context.len()
     );
-    let claude_path = match find_claude_binary_web() {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("📐 ❌ claude binary not found: {e}");
-            return Json(ApiResponse::error(format!("claude binary not found: {e}")));
+
+    let api_key = match std::env::var("ANTHROPIC_API_KEY") {
+        Ok(k) if !k.is_empty() => k,
+        _ => {
+            eprintln!("📐 ❌ ANTHROPIC_API_KEY not set");
+            return ndjson_error("ANTHROPIC_API_KEY not set".into());
         }
     };
 
-    let (view_instructions, schema_example, model) = match req.view.as_str() {
-        "structure" => (
-            "VIEW: project structure layout. Identify 4–8 high-level architectural blocks \
-             (e.g. \"Backend API\", \"Auth handler\", \"Database layer\"). Each block can span \
-             multiple files. Use the `parent` field if some blocks naturally group under a larger \
-             module. Add arrows between blocks with short verb labels: \"calls\", \"imports\", \
-             \"renders\", \"queries\", \"reads from\", etc. For each block, populate `provenance.files` \
-             with the relevant file paths and `provenance.functions` with actual function/method \
-             names from those files (do NOT invent function names that aren't in the code).",
-            "{\n  \"blocks\": [\n    {\n      \"id\": \"unique_string\",\n      \"label\": \"display name\",\n      \"caption\": \"1-line role description\",\n      \"parent\": \"parent_block_id_or_null\",\n      \"position\": { \"x\": 0, \"y\": 0 },\n      \"provenance\": { \"files\": [\"path/to/file\"], \"functions\": [\"funcName\"] }\n    }\n  ],\n  \"arrows\": [\n    { \"from\": \"block_id\", \"to\": \"block_id\", \"label\": \"verb\" }\n  ]\n}",
-            "sonnet",
-        ),
-        other => {
-            return Json(ApiResponse::error(format!("unknown view: {other}")));
-        }
-    };
+    let chat_block = req
+        .chat_context
+        .as_ref()
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| format!("\n\nRECENT CHAT (most recent last):\n{}\n", s))
+        .unwrap_or_default();
 
-    let prompt = format!(
-        "You are generating a structured diagram of a software project. {view_instructions}\n\n\
-LAYOUT RULES:\n\
-- Each block is rendered as a 160×80 rectangle.\n\
-- Place blocks in a clean top-to-bottom or left-to-right flow.\n\
-- Leave AT LEAST 200px between sibling block centers horizontally and 180px vertically. Generous spacing prevents arrows and their labels from overlapping other blocks.\n\
-- For child blocks (with `parent` set), position them BELOW and within the horizontal span of their parent.\n\
-- Top-level blocks start at y=0; depth-2 around y=200; depth-3 around y=400; etc.\n\
-- IMPORTANT: a straight line between any two arrow-connected blocks MUST NOT cross through another block's rectangle. Plan positions so arrow paths are clear.\n\
-- If one block has 3+ outgoing arrows, fan the targets out along an arc or row so the arrows don't bundle on top of each other.\n\
-- Avoid placing semantic arrow labels (the verbs in `arrows[].label`) where they would land on top of any block — that means avoiding mid-points of arrows that pass near other rectangles.\n\n\
-OUTPUT SCHEMA (JSON, no markdown fences, no prose):\n\
-{schema_example}\n\n\
-Output ONLY valid JSON. Use stable, readable ids derived from path or label (e.g. \"src_App_tsx\", \"backend_api\").\n\n\
-PROJECT:\n{}",
-        req.project_context
-    );
+    let base_block = req
+        .base_schema
+        .as_ref()
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| format!("\n\nEXISTING OVERVIEW BLOCKS:\n{}\n", s))
+        .unwrap_or_default();
 
-    let output_future = async {
-        use tokio::io::AsyncWriteExt;
-        let mut child = tokio::process::Command::new(&claude_path)
-            .arg("-p")
-            .arg("--model")
-            .arg(model)
-            .arg("--output-format")
-            .arg("text")
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()?;
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin.write_all(prompt.as_bytes()).await?;
-            stdin.shutdown().await?;
-        }
-        child.wait_with_output().await
-    };
+    // Validate view up front so we don't enter the stream with garbage.
+    if build_diagram_body(&req.view, &[]).is_none() {
+        return ndjson_error(format!("unknown view: {}", req.view));
+    }
 
-    let output =
-        match tokio::time::timeout(std::time::Duration::from_secs(90), output_future).await {
-            Ok(Ok(o)) => o,
-            Ok(Err(e)) => {
-                eprintln!("📐 ❌ spawn failed in {:?}: {e}", started.elapsed());
-                return Json(ApiResponse::error(format!("spawn failed: {e}")));
-            }
-            Err(_) => {
-                eprintln!(
-                    "📐 ❌ claude timed out after 90s ({:?} elapsed)",
-                    started.elapsed()
+    let initial_user_content =
+        build_initial_user_content(&req.project_context, &chat_block, &base_block);
+    let view = req.view.clone();
+
+    let body_stream = async_stream::stream! {
+        use futures_util::StreamExt;
+        let client = reqwest::Client::new();
+
+        // Conversation state. Grows by 2 entries per turn after the first
+        // (assistant response + user tool_results).
+        let mut messages: Vec<serde_json::Value> = vec![json!({
+            "role": "user",
+            "content": initial_user_content,
+        })];
+
+        let mut total_emitted = 0usize;
+        let mut total_output_tokens: u64 = 0;
+        let mut total_cache_read: u64 = 0;
+        let mut total_cache_write: u64 = 0;
+        let mut final_stop_reason = String::from("(none)");
+        let mut done_called = false;
+        let mut turn_idx = 0usize;
+
+        'outer: while turn_idx < MAX_DIAGRAM_TURNS {
+            let body = match build_diagram_body(&view, &messages) {
+                Some(b) => b,
+                None => {
+                    let err = format!("{}\n", json!({ "kind": "error", "message": "unknown view" }));
+                    yield Ok::<_, std::io::Error>(axum::body::Bytes::from(err));
+                    break 'outer;
+                }
+            };
+
+            let resp = match client
+                .post("https://api.anthropic.com/v1/messages")
+                .header("x-api-key", &api_key)
+                .header("anthropic-version", "2023-06-01")
+                .header("content-type", "application/json")
+                .json(&body)
+                .send()
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("📐 ❌ anthropic request failed (turn {turn_idx}): {e}");
+                    let err = format!(
+                        "{}\n",
+                        json!({ "kind": "error", "message": format!("anthropic request failed: {e}") })
+                    );
+                    yield Ok::<_, std::io::Error>(axum::body::Bytes::from(err));
+                    break 'outer;
+                }
+            };
+
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let text = resp.text().await.unwrap_or_default();
+                eprintln!("📐 ❌ anthropic returned {status} (turn {turn_idx}): {text}");
+                let err = format!(
+                    "{}\n",
+                    json!({ "kind": "error", "message": format!("anthropic returned {status}: {text}") })
                 );
-                return Json(ApiResponse::error(
-                    "Claude took longer than 90 seconds. Try a smaller project or retry.".into(),
-                ));
+                yield Ok::<_, std::io::Error>(axum::body::Bytes::from(err));
+                break 'outer;
             }
-        };
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+            let mut bytes_stream = resp.bytes_stream();
+            let mut byte_buf: Vec<u8> = Vec::new();
+            // content-block index -> (tool id, tool name, partial JSON)
+            let mut pending: std::collections::HashMap<u64, (String, String, String)> =
+                Default::default();
+            // tool_uses fully assembled this turn, in emission order, for
+            // building the assistant reply we'll send back on next turn.
+            let mut turn_tool_uses: Vec<(String, String, serde_json::Value)> = Vec::new();
+            let mut turn_stop_reason = String::from("(none)");
+            let mut turn_output_tokens: u64 = 0;
+
+            while let Some(chunk_res) = bytes_stream.next().await {
+                let chunk = match chunk_res {
+                    Ok(b) => b,
+                    Err(e) => {
+                        eprintln!("📐 ❌ stream chunk error (turn {turn_idx}): {e}");
+                        break;
+                    }
+                };
+                byte_buf.extend_from_slice(&chunk);
+
+                while let Some(nl_pos) = byte_buf.iter().position(|&b| b == b'\n') {
+                    let line_bytes: Vec<u8> = byte_buf.drain(..=nl_pos).collect();
+                    let line_str =
+                        String::from_utf8_lossy(&line_bytes[..line_bytes.len() - 1]);
+                    let line = line_str.trim_end_matches('\r');
+
+                    let Some(data) = line.strip_prefix("data: ") else { continue };
+                    let event: serde_json::Value = match serde_json::from_str(data) {
+                        Ok(v) => v,
+                        Err(_) => continue,
+                    };
+                    let Some(ty) = event.get("type").and_then(|v| v.as_str()) else { continue };
+
+                    match ty {
+                        "message_start" => {
+                            if let Some(u) = event.pointer("/message/usage") {
+                                total_cache_read += u.get("cache_read_input_tokens")
+                                    .and_then(|v| v.as_u64()).unwrap_or(0);
+                                total_cache_write += u.get("cache_creation_input_tokens")
+                                    .and_then(|v| v.as_u64()).unwrap_or(0);
+                            }
+                        }
+                        "content_block_start" => {
+                            let Some(idx) = event.get("index").and_then(|v| v.as_u64()) else { continue };
+                            let cb = event.get("content_block");
+                            let block_type = cb
+                                .and_then(|v| v.get("type"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("?");
+                            if block_type != "tool_use" {
+                                eprintln!("📐 · non-tool content block: type={block_type}");
+                                continue;
+                            }
+                            let id = cb
+                                .and_then(|v| v.get("id"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            let name = cb
+                                .and_then(|v| v.get("name"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            pending.insert(idx, (id, name, String::new()));
+                        }
+                        "content_block_delta" => {
+                            let Some(idx) = event.get("index").and_then(|v| v.as_u64()) else { continue };
+                            let Some(delta) = event.get("delta") else { continue };
+                            if delta.get("type").and_then(|v| v.as_str()) != Some("input_json_delta") {
+                                continue;
+                            }
+                            let Some(partial) = delta.get("partial_json").and_then(|v| v.as_str()) else { continue };
+                            if let Some(entry) = pending.get_mut(&idx) {
+                                entry.2.push_str(partial);
+                            }
+                        }
+                        "content_block_stop" => {
+                            let Some(idx) = event.get("index").and_then(|v| v.as_u64()) else { continue };
+                            let Some((id, name, json_buf)) = pending.remove(&idx) else { continue };
+                            let input: serde_json::Value = if json_buf.trim().is_empty() {
+                                json!({})
+                            } else {
+                                match serde_json::from_str(&json_buf) {
+                                    Ok(v) => v,
+                                    Err(e) => {
+                                        eprintln!("📐 ⚠ bad tool input for {name}: {e} :: {json_buf}");
+                                        continue;
+                                    }
+                                }
+                            };
+                            if name == "done" {
+                                done_called = true;
+                            }
+                            let line_obj = tool_use_to_ndjson(&name, input.clone());
+                            total_emitted += 1;
+                            let chunk = format!("{}\n", line_obj);
+                            yield Ok::<_, std::io::Error>(axum::body::Bytes::from(chunk));
+                            turn_tool_uses.push((id, name, input));
+                        }
+                        "message_delta" => {
+                            if let Some(sr) = event.pointer("/delta/stop_reason").and_then(|v| v.as_str()) {
+                                turn_stop_reason = sr.to_string();
+                            }
+                            if let Some(ot) = event.pointer("/usage/output_tokens").and_then(|v| v.as_u64()) {
+                                turn_output_tokens = ot;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            total_output_tokens += turn_output_tokens;
+            final_stop_reason = turn_stop_reason.clone();
+            eprintln!(
+                "📐 · turn {turn_idx}: {} tool_uses, stop_reason={turn_stop_reason}, output_tokens={turn_output_tokens}",
+                turn_tool_uses.len()
+            );
+
+            // Terminate when the model is finished. `done` is the
+            // schema-level signal; `end_turn` means the model decided
+            // there's nothing left even without calling done.
+            if done_called || turn_stop_reason == "end_turn" {
+                break 'outer;
+            }
+            // Unexpected stop_reason (max_tokens, refusal, etc) — log and
+            // stop so we don't loop forever on a malformed response.
+            if turn_stop_reason != "tool_use" {
+                eprintln!("📐 ⚠ unexpected stop_reason '{turn_stop_reason}', breaking loop");
+                break 'outer;
+            }
+            // If the turn emitted zero tool_uses but claimed tool_use,
+            // continuing would resend the same prompt and burn tokens.
+            if turn_tool_uses.is_empty() {
+                eprintln!("📐 ⚠ turn ended with no tool_uses, breaking loop");
+                break 'outer;
+            }
+
+            // Build the assistant reply (echo back the exact tool_uses
+            // we just received — required by the API) and synthetic
+            // tool_results so the next turn can keep going.
+            let assistant_content: Vec<serde_json::Value> = turn_tool_uses
+                .iter()
+                .map(|(id, name, input)| {
+                    json!({
+                        "type": "tool_use",
+                        "id": id,
+                        "name": name,
+                        "input": input,
+                    })
+                })
+                .collect();
+            messages.push(json!({ "role": "assistant", "content": assistant_content }));
+
+            let tool_results: Vec<serde_json::Value> = turn_tool_uses
+                .iter()
+                .map(|(id, _name, _input)| {
+                    json!({
+                        "type": "tool_result",
+                        "tool_use_id": id,
+                        "content": "ok",
+                    })
+                })
+                .collect();
+            messages.push(json!({ "role": "user", "content": tool_results }));
+
+            turn_idx += 1;
+        }
+
         eprintln!(
-            "📐 ❌ claude exited non-zero in {:?}: {stderr}",
+            "📐 ✅ stream done: {total_emitted} events across {} turns, stop_reason={final_stop_reason}, done_called={done_called}, output_tokens={total_output_tokens}, cache read={total_cache_read} write={total_cache_write} in {:?}",
+            turn_idx + 1,
             started.elapsed()
         );
-        return Json(ApiResponse::error(format!(
-            "claude exited non-zero: {stderr}"
-        )));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let json_slice = match (stdout.find('{'), stdout.rfind('}')) {
-        (Some(start), Some(end)) if end > start => &stdout[start..=end],
-        _ => {
-            eprintln!(
-                "📐 ❌ no JSON in claude output ({:?}): {stdout}",
-                started.elapsed()
-            );
-            return Json(ApiResponse::error(format!(
-                "no JSON found in output: {stdout}"
-            )));
-        }
     };
 
-    match serde_json::from_str::<DiagramSchema>(json_slice) {
-        Ok(schema) => {
-            eprintln!(
-                "📐 ✅ {} blocks, {} arrows in {:?}",
-                schema.blocks.len(),
-                schema.arrows.len(),
-                started.elapsed()
-            );
-            Json(ApiResponse::success(schema))
-        }
-        Err(e) => {
-            eprintln!(
-                "📐 ❌ schema parse failed in {:?}: {e}\n--- raw json ---\n{json_slice}",
-                started.elapsed()
-            );
-            Json(ApiResponse::error(format!("schema parse: {e}")))
-        }
-    }
+    Response::builder()
+        .header(header::CONTENT_TYPE, "application/x-ndjson")
+        .header(header::CACHE_CONTROL, "no-cache")
+        .body(Body::from_stream(body_stream))
+        .unwrap()
+        .into_response()
+}
+
+/// Single-line error fallback, served as NDJSON so the streaming client
+/// reads it the same way as success chunks.
+fn ndjson_error(message: String) -> Response {
+    let body = format!(
+        "{}\n",
+        serde_json::json!({ "kind": "error", "message": message })
+    );
+    Response::builder()
+        .header(header::CONTENT_TYPE, "application/x-ndjson")
+        .header(header::CACHE_CONTROL, "no-cache")
+        .body(Body::from(body))
+        .unwrap()
+        .into_response()
 }
 
 #[derive(Debug, Deserialize)]
@@ -1131,6 +1516,24 @@ impl Drop for ToolBridgeHandle {
     }
 }
 
+/// Empty, non-git directory used as the cwd for spawned Claude Code
+/// chat subprocesses when no explicit `project_path` is supplied.
+///
+/// Without this, the subprocess inherits the backend's cwd (usually
+/// `backend/` inside the harness repo). Claude Code then auto-injects
+/// the parent repo's gitStatus + file listing into the inner Claude's
+/// system context, which leaks harness internals into the user-facing
+/// chat (e.g. the model starts guessing at `../src/styles.css`).
+/// Pointing cwd at an empty, non-git dir blocks that auto-introspection.
+///
+/// Idempotent: `create_dir_all` is a no-op if it already exists.
+fn chat_sandbox_dir() -> std::path::PathBuf {
+    let base = dirs::home_dir().unwrap_or_else(std::env::temp_dir);
+    let dir = base.join(".claude-ui-app").join("chat-sandbox");
+    let _ = std::fs::create_dir_all(&dir);
+    dir
+}
+
 /// Locate the `tool-bridge` binary. By convention Cargo puts sibling bins
 /// in the same target directory, so we look next to the current exe
 /// first. If not found there (e.g. running `cargo run` for the main
@@ -1333,17 +1736,20 @@ async fn execute_claude_command(
     }
     append_extra_args(&mut args, &extra);
     cmd.args(&args);
-    if !project_path.is_empty() {
-        cmd.current_dir(&project_path);
-    }
+    let effective_cwd = if !project_path.is_empty() {
+        std::path::PathBuf::from(&project_path)
+    } else {
+        chat_sandbox_dir()
+    };
+    cmd.current_dir(&effective_cwd);
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
 
     println!(
-        "[TRACE] Command: {} {:?} (cwd override: {})",
+        "[TRACE] Command: {} {:?} (cwd: {})",
         claude_path,
         args,
-        if project_path.is_empty() { "<none>" } else { project_path.as_str() }
+        effective_cwd.display()
     );
 
     // Spawn Claude process
@@ -1534,9 +1940,12 @@ async fn continue_claude_command(
     }
     append_extra_args(&mut args, &extra);
     cmd.args(&args);
-    if !project_path.is_empty() {
-        cmd.current_dir(&project_path);
-    }
+    let effective_cwd = if !project_path.is_empty() {
+        std::path::PathBuf::from(&project_path)
+    } else {
+        chat_sandbox_dir()
+    };
+    cmd.current_dir(&effective_cwd);
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
 
@@ -1694,9 +2103,12 @@ async fn resume_claude_command(
     }
     append_extra_args(&mut args, &extra);
     cmd.args(&args);
-    if !project_path.is_empty() {
-        cmd.current_dir(&project_path);
-    }
+    let effective_cwd = if !project_path.is_empty() {
+        std::path::PathBuf::from(&project_path)
+    } else {
+        chat_sandbox_dir()
+    };
+    cmd.current_dir(&effective_cwd);
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
 

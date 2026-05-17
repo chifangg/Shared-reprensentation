@@ -25,6 +25,13 @@ struct Args {
 
 #[tokio::main]
 async fn main() {
+    // Load .env (e.g. ANTHROPIC_API_KEY) before anything reads env. Tries
+    // `./.env` (cargo run from backend/) first, then `./backend/.env`
+    // (cargo run from repo root). Silent if absent — production can rely
+    // on shell env.
+    let _ = dotenvy::from_filename(".env")
+        .or_else(|_| dotenvy::from_filename("backend/.env"));
+
     env_logger::init();
 
     let args = Args::parse();
@@ -51,130 +58,107 @@ async fn main() {
     }
 }
 
-/// Reference tool registry. Replace in your fork.
+/// Tool registry for the project-explorer prototype. The chat surface
+/// hands Claude one client-side tool: `read_project_file`. The browser
+/// owns the user's uploaded project (in the React `ProjectContext`) so
+/// the file contents never leave the client — the tool-bridge round-trip
+/// reaches into the browser, looks up the file, and returns its body to
+/// Claude as the tool result.
 fn build_tool_registry() -> core::tools::ToolRegistry {
     let mut b = core::tools::ToolRegistry::builder();
 
-    // Server tool — runs in this Rust process. Calls the free
-    // Open-Meteo API to return real current weather for any location.
-    // See `examples::weather` for the implementation; swap in a richer
-    // provider (AccuWeather, Pirate Weather, …) as a one-file change.
-    b.server_tool(
-        "get_weather",
-        "Return the current weather for a city. Use this whenever the \
-         user asks about the weather anywhere in the world. Supports \
-         city names in any language (e.g. 'Tokyo', 'São Paulo', 'Oslo').",
-        json!({
-            "type": "object",
-            "properties": {
-                "location": {
-                    "type": "string",
-                    "description": "City name, e.g. 'Tokyo' or 'Oslo'."
-                }
-            },
-            "required": ["location"],
-            "additionalProperties": false
-        }),
-        |input| async move { examples::weather::fetch(input).await },
-    );
-
-    // Client tool — rendered by a React component (wired in Phase 4).
-    // Claude calls this to ask the user a multiple-choice question; the
-    // user's click becomes the tool's return value.
     b.client_tool(
-        "show_choice",
-        "Present the user with a short list of choices and wait for them \
-         to pick one. Use this whenever you want the user to commit to a \
-         concrete option (confirm a booking, pick a color, etc).",
+        "read_project_file",
+        "Read the full contents of a file from the user's uploaded \
+         project. The system prompt includes a tree of every available \
+         path; pass one of those paths exactly to fetch its body. Use \
+         this whenever you need to look at code the user is asking \
+         about — do not try to guess from the path alone.",
         json!({
             "type": "object",
             "properties": {
-                "prompt":  { "type": "string" },
-                "options": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "minItems": 2
+                "path": {
+                    "type": "string",
+                    "description": "Project-relative path exactly as it \
+                        appears in the <tree> block of the system \
+                        prompt (e.g. 'transcript_annotation_BU/app.py')."
                 }
             },
-            "required": ["prompt", "options"],
+            "required": ["path"],
             "additionalProperties": false
         }),
     );
 
-    // Server tool — procedurally-generated flight search (see
-    // `examples::flights`). Deterministic seed by (origin, destination,
-    // date) so the same query returns the same flights. Replace the
-    // handler with a real aggregator (Amadeus, Duffel, Skyscanner) when
-    // moving to production.
-    b.server_tool(
-        "search_flights",
-        "Search available flights between two cities on a given date. \
-         Always call this before offering flights to the user. The \
-         result is a list of flights the user will then pick from via \
-         `show_flight_options`.",
-        json!({
-            "type": "object",
-            "properties": {
-                "origin": {
-                    "type": "string",
-                    "description": "Origin city name or IATA code, e.g. 'SFO' or 'San Francisco'."
-                },
-                "destination": {
-                    "type": "string",
-                    "description": "Destination city name or IATA code."
-                },
-                "date": {
-                    "type": "string",
-                    "description": "Departure date as YYYY-MM-DD."
-                }
-            },
-            "required": ["origin", "destination", "date"],
-            "additionalProperties": false
-        }),
-        |input| async move { examples::flights::search(input).await },
-    );
-
-    // Client tool — renders a list of flight options and returns the
-    // id the user picks. The handler is
-    // `src/core/tools/builtins/FlightResults.tsx` on the frontend.
     b.client_tool(
-        "show_flight_options",
-        "Render a list of flights for the user to pick from. Call this \
-         only after `search_flights` so you have real flight data to pass. \
-         The returned `picked_id` matches one of the input flights' `id`.",
+        "edit_project_file",
+        "Make a small in-place edit to a file by replacing one substring \
+         with another. PREFER this over `write_project_file` for any \
+         edit that touches less than roughly half the file — it is \
+         dramatically faster because you do not have to re-emit the \
+         entire body (a one-line change in a 30KB file is ~1s vs \
+         ~15s with write_project_file). Always call `read_project_file` \
+         first so you know the exact text and surrounding context. \
+         `old_string` must appear EXACTLY ONCE in the file — include a \
+         few surrounding lines if needed to disambiguate — unless you \
+         set `replace_all` to true. Preserve indentation and whitespace \
+         exactly as they appear in the file.",
         json!({
             "type": "object",
             "properties": {
-                "origin":      { "type": "string" },
-                "destination": { "type": "string" },
-                "date":        { "type": "string" },
-                "flights": {
-                    "type": "array",
-                    "minItems": 1,
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "id":               { "type": "string" },
-                            "airline":          { "type": "string" },
-                            "flight_number":    { "type": "string" },
-                            "origin":           { "type": "string" },
-                            "destination":      { "type": "string" },
-                            "depart_time":      { "type": "string" },
-                            "arrive_time":      { "type": "string" },
-                            "duration_minutes": { "type": "number" },
-                            "stops":            { "type": "number" },
-                            "price_usd":        { "type": "number" },
-                            "cabin":            { "type": "string" }
-                        },
-                        "required": [
-                            "id", "airline", "flight_number",
-                            "depart_time", "arrive_time",
-                            "duration_minutes", "stops", "price_usd"
-                        ]
-                    }
+                "path": {
+                    "type": "string",
+                    "description": "Project-relative path exactly as it \
+                        appears in the <tree> block of the system prompt."
+                },
+                "old_string": {
+                    "type": "string",
+                    "description": "The exact substring to replace. Must \
+                        be unique in the file unless replace_all is true. \
+                        Preserve indentation and whitespace verbatim."
+                },
+                "new_string": {
+                    "type": "string",
+                    "description": "The text to substitute for old_string."
+                },
+                "replace_all": {
+                    "type": "boolean",
+                    "description": "If true, replace every occurrence of \
+                        old_string. Defaults to false."
                 }
             },
-            "required": ["origin", "destination", "date", "flights"],
+            "required": ["path", "old_string", "new_string"],
+            "additionalProperties": false
+        }),
+    );
+
+    b.client_tool(
+        "write_project_file",
+        "Overwrite the full contents of a file in the user's uploaded \
+         project, or create a new file if the path doesn't exist yet. \
+         The browser will atomically replace the file body. Use this \
+         only after the user has clearly asked for a change — never \
+         edit speculatively. Always read the file with \
+         `read_project_file` first when modifying existing code so you \
+         don't blow away unrelated content. Returns the new size on \
+         success.",
+        json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Project-relative path. For existing \
+                        files use the path exactly as it appears in the \
+                        <tree>. For new files use a sensible path \
+                        relative to the project root."
+                },
+                "content": {
+                    "type": "string",
+                    "description": "The complete new file body. This \
+                        REPLACES whatever was there — partial edits are \
+                        not supported."
+                }
+            },
+            "required": ["path", "content"],
             "additionalProperties": false
         }),
     );
