@@ -69,10 +69,8 @@ import {
   buildArrowJsonSuffix,
   buildFileTreeBlock,
 } from "@/features/diagram/protocol/prompts";
-import { buildProjectContext } from "@/features/diagram/api/buildProjectContext";
-import { buildChatContext } from "@/features/diagram/api/buildChatContext";
-import { fetchStructureStream } from "@/features/diagram/api/fetchStructure";
-import { fetchFocusStream } from "@/features/diagram/api/fetchFocus";
+import { useDiagramStructureFetch } from "@/features/diagram/hooks/useDiagramStructureFetch";
+import { useAdaptiveFocus } from "@/features/diagram/hooks/useAdaptiveFocus";
 import { nodeTypes } from "@/features/diagram/components/nodes/BlockNode";
 import { edgeTypes } from "@/features/diagram/components/nodes/LabeledEdge";
 import { DiagramViewSwitcher } from "@/features/diagram/components/DiagramViewSwitcher";
@@ -152,20 +150,7 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
   const { files, chatMessages, chatRunning, projectKey } = useProject();
   const { fitView } = useReactFlow();
 
-  const filesKey = files
-    .map((f) => f.path)
-    .sort()
-    .join("|");
-
-  const [state, setState] = useState<FetchState>({ kind: "idle" });
-  const [retryNonce, setRetryNonce] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [regenerating, setRegenerating] = useState(false);
-  const [focused, setFocused] = useState<{
-    ids: string[];
-    blocks: DiagramBlock[];
-    arrows: DiagramArrow[];
-  } | null>(null);
   const [promoted, setPromoted] = useState<{
     blocks: DiagramBlock[];
     arrows: DiagramArrow[];
@@ -215,22 +200,33 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
   );
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
 
+  // Structure fetch lifecycle: reset on projectKey, stream
+  // /api/diagram?view=structure into FetchState + nodes + edges.
+  const { state, setState, setRetryNonce } = useDiagramStructureFetch({
+    projectKey,
+    files,
+    selectedId,
+    setNodes,
+    setEdges,
+  });
+
+  // Adaptive focus lifecycle: debounced /api/diagram?view=focus on
+  // each new user turn. Resets on projectKey.
+  const { focused, setFocused, regenerating } = useAdaptiveFocus({
+    view,
+    state,
+    files,
+    chatMessages,
+    projectKey,
+  });
+
+  // Reset the small in-component state on USER-initiated project
+  // change. (FetchState, nodes/edges, focused, regenerating are
+  // already reset by the hooks above.)
   useEffect(() => {
-    // Only fire on USER-initiated project changes (upload, reset) —
-    // tracked via projectKey from ProjectContext. Previously this
-    // depended on `filesKey` (paths joined), so Claude calling
-    // write_project_file with a new path would flip filesKey →
-    // entire diagram wiped to "idle" mid-turn → "Claude is drawing"
-    // re-fetch kicked in. Switching to projectKey makes it stable
-    // across Claude's per-turn file mutations.
-    setState({ kind: "idle" });
-    setNodes([]);
-    setEdges([]);
     setSelectedId(null);
-    setRegenerating(false);
-    setFocused(null);
     setPromoted({ blocks: [], arrows: [] });
-  }, [projectKey, setNodes, setEdges]);
+  }, [projectKey]);
 
   // We deliberately do NOT clear `focused` when switching away from
   // focus view — the layout/panel both already gate on `view === "focus"`,
@@ -1000,70 +996,7 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
     [recentChanges],
   );
 
-  useEffect(() => {
-    if (files.length === 0) return;
-    if (state.kind !== "idle") return;
-
-    setState({ kind: "loading", startedAt: Date.now() });
-    setNodes([]);
-    setEdges([]);
-    const controller = new AbortController();
-    const projectContext = buildProjectContext(files, null);
-
-    const blocks: DiagramBlock[] = [];
-    const arrows: DiagramArrow[] = [];
-
-    const reLayout = () => {
-      const laid = layoutSchema({ blocks, arrows }, selectedId);
-      setNodes(laid.nodes);
-      setEdges(laid.edges);
-    };
-
-    (async () => {
-      let errorMessage: string | null = null;
-      try {
-        await fetchStructureStream({
-          projectContext,
-          signal: controller.signal,
-          onEvent: (evt) => {
-            if (evt.kind === "block") {
-              const block = evt.data;
-              const dupIdx = blocks.findIndex((b) => b.id === block.id);
-              if (dupIdx >= 0) blocks[dupIdx] = block;
-              else blocks.push(block);
-              reLayout();
-            } else if (evt.kind === "arrow") {
-              const arrow = evt.data;
-              const dupIdx = arrows.findIndex(
-                (a) => a.from === arrow.from && a.to === arrow.to,
-              );
-              if (dupIdx >= 0) arrows[dupIdx] = arrow;
-              else arrows.push(arrow);
-              reLayout();
-            } else if (evt.kind === "error") {
-              errorMessage = evt.message;
-            }
-          },
-        });
-
-        if (controller.signal.aborted) return;
-        if (errorMessage) {
-          setState({ kind: "error", message: errorMessage });
-        } else {
-          setState({
-            kind: "ready",
-            schema: { blocks, arrows },
-          });
-        }
-      } catch (e) {
-        if (controller.signal.aborted) return;
-        setState({ kind: "error", message: String(e) });
-      }
-    })();
-
-    return () => controller.abort();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filesKey, retryNonce, setNodes, setEdges]);
+  // Structure fetch lifecycle handled by useDiagramStructureFetch above.
 
   // Re-layout when selection toggles, so dagre makes room for the
   // expanded block and surrounding nodes glide via CSS transition.
@@ -1419,106 +1352,7 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
     // transition guard above keeps it idempotent.
   }, [chatRunning, chatMessages]);
 
-  // Adaptive focus: fire one focus-delta request per user turn. We
-  // count user messages (not total chatMessages.length) so the assistant
-  // streaming many intermediate items — thinking, tool calls, tool
-  // results, text chunks — doesn't keep retriggering the regen and
-  // making the panel flicker. We hold a ref to the latest chat history
-  // so the deferred fetch picks up whatever the assistant has produced
-  // by then, even though the effect doesn't re-run on every chunk.
-  const chatMessagesRef = useRef(chatMessages);
-  useEffect(() => {
-    chatMessagesRef.current = chatMessages;
-  }, [chatMessages]);
-
-  const userMessageCount = chatMessages.reduce(
-    (n, m) => n + ((m as { type?: string }).type === "user" ? 1 : 0),
-    0,
-  );
-  const lastUserCountRef = useRef(0);
-  useEffect(() => {
-    if (view !== "focus") return;
-    if (state.kind !== "ready") return;
-    if (files.length === 0) return;
-    if (userMessageCount === lastUserCountRef.current) return;
-    lastUserCountRef.current = userMessageCount;
-    if (userMessageCount === 0) return;
-
-    const controller = new AbortController();
-    const debounceTimer = window.setTimeout(() => {
-      const projectContext = buildProjectContext(files, null);
-      const chatContext = buildChatContext(chatMessagesRef.current, 3);
-      const baseSchemaJson = JSON.stringify({
-        blocks: state.schema.blocks.map((b) => ({
-          id: b.id,
-          label: b.label,
-          caption: b.caption,
-        })),
-      });
-      setRegenerating(true);
-
-      const newDetailBlocks: DiagramBlock[] = [];
-      const newDetailArrows: DiagramArrow[] = [];
-      const newFocusedIds: string[] = [];
-
-      (async () => {
-        try {
-          await fetchFocusStream({
-            projectContext,
-            chatContext,
-            baseSchemaJson,
-            signal: controller.signal,
-            onEvent: (evt) => {
-              if (evt.kind === "focus") {
-                // Accumulate ids but DON'T replace `focused` yet — if
-                // the previous turn had detail blocks visible, blowing
-                // them away the moment a new focus arrives makes the
-                // panel flash empty. Wait for the first detail_block
-                // (or stream end) to commit the swap.
-                newFocusedIds.push(...evt.ids);
-              } else if (evt.kind === "detail_block") {
-                newDetailBlocks.push(evt.data);
-                setFocused({
-                  ids: [...newFocusedIds],
-                  blocks: [...newDetailBlocks],
-                  arrows: [...newDetailArrows],
-                });
-                setRegenerating(false);
-              } else if (evt.kind === "detail_arrow") {
-                newDetailArrows.push(evt.data);
-                setFocused({
-                  ids: [...newFocusedIds],
-                  blocks: [...newDetailBlocks],
-                  arrows: [...newDetailArrows],
-                });
-              }
-            },
-          });
-          if (controller.signal.aborted) return;
-          // Edge: focus event arrived but no detail_block ever did.
-          // Commit at least the new ids so the panel reflects the new
-          // turn rather than appearing stuck on the previous topic.
-          if (newDetailBlocks.length === 0 && newFocusedIds.length > 0) {
-            setFocused({
-              ids: [...newFocusedIds],
-              blocks: [],
-              arrows: [],
-            });
-          }
-          setRegenerating(false);
-        } catch {
-          if (controller.signal.aborted) return;
-          setRegenerating(false);
-        }
-      })();
-    }, 1200);
-
-    return () => {
-      window.clearTimeout(debounceTimer);
-      controller.abort();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userMessageCount, view, files.length]);
+  // Adaptive focus lifecycle handled by useAdaptiveFocus above.
 
   // Re-render base canvas. Detail blocks live in the side panel by
   // default; the user can promote individual ones into the main
