@@ -71,6 +71,8 @@ import {
 } from "@/features/diagram/protocol/prompts";
 import { buildProjectContext } from "@/features/diagram/api/buildProjectContext";
 import { buildChatContext } from "@/features/diagram/api/buildChatContext";
+import { fetchStructureStream } from "@/features/diagram/api/fetchStructure";
+import { fetchFocusStream } from "@/features/diagram/api/fetchFocus";
 import { nodeTypes } from "@/features/diagram/components/nodes/BlockNode";
 import { edgeTypes } from "@/features/diagram/components/nodes/LabeledEdge";
 import { DiagramViewSwitcher } from "@/features/diagram/components/DiagramViewSwitcher";
@@ -1018,48 +1020,20 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
     };
 
     (async () => {
+      let errorMessage: string | null = null;
       try {
-        const resp = await fetch("/api/diagram", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            project_context: projectContext,
-            view: "structure",
-          }),
+        await fetchStructureStream({
+          projectContext,
           signal: controller.signal,
-        });
-        if (!resp.body) throw new Error("no response body");
-
-        const reader = resp.body.getReader();
-        const decoder = new TextDecoder();
-        let buf = "";
-        let errorMessage: string | null = null;
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buf += decoder.decode(value, { stream: true });
-
-          let nl: number;
-          while ((nl = buf.indexOf("\n")) !== -1) {
-            const line = buf.slice(0, nl).trim();
-            buf = buf.slice(nl + 1);
-            if (!line) continue;
-            let evt: { kind?: string; data?: unknown; message?: string };
-            try {
-              evt = JSON.parse(line);
-            } catch {
-              continue;
-            }
-            console.log("[diagram/structure]", evt);
-            if (evt.kind === "block" && evt.data) {
-              const block = evt.data as DiagramBlock;
+          onEvent: (evt) => {
+            if (evt.kind === "block") {
+              const block = evt.data;
               const dupIdx = blocks.findIndex((b) => b.id === block.id);
               if (dupIdx >= 0) blocks[dupIdx] = block;
               else blocks.push(block);
               reLayout();
-            } else if (evt.kind === "arrow" && evt.data) {
-              const arrow = evt.data as DiagramArrow;
+            } else if (evt.kind === "arrow") {
+              const arrow = evt.data;
               const dupIdx = arrows.findIndex(
                 (a) => a.from === arrow.from && a.to === arrow.to,
               );
@@ -1067,10 +1041,10 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
               else arrows.push(arrow);
               reLayout();
             } else if (evt.kind === "error") {
-              errorMessage = evt.message || "stream error";
+              errorMessage = evt.message;
             }
-          }
-        }
+          },
+        });
 
         if (controller.signal.aborted) return;
         if (errorMessage) {
@@ -1489,66 +1463,37 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
 
       (async () => {
         try {
-          const resp = await fetch("/api/diagram", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              project_context: projectContext,
-              view: "focus",
-              chat_context: chatContext,
-              base_schema: baseSchemaJson,
-            }),
+          await fetchFocusStream({
+            projectContext,
+            chatContext,
+            baseSchemaJson,
             signal: controller.signal,
-          });
-          if (!resp.body) throw new Error("no response body");
-          const reader = resp.body.getReader();
-          const decoder = new TextDecoder();
-          let buf = "";
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buf += decoder.decode(value, { stream: true });
-            let nl: number;
-            while ((nl = buf.indexOf("\n")) !== -1) {
-              const line = buf.slice(0, nl).trim();
-              buf = buf.slice(nl + 1);
-              if (!line) continue;
-              let evt: {
-                kind?: string;
-                data?: unknown;
-                ids?: string[];
-              };
-              try {
-                evt = JSON.parse(line);
-              } catch {
-                continue;
-              }
-              console.log("[diagram/focus]", evt);
-              if (evt.kind === "focus" && Array.isArray(evt.ids)) {
+            onEvent: (evt) => {
+              if (evt.kind === "focus") {
                 // Accumulate ids but DON'T replace `focused` yet — if
                 // the previous turn had detail blocks visible, blowing
                 // them away the moment a new focus arrives makes the
                 // panel flash empty. Wait for the first detail_block
                 // (or stream end) to commit the swap.
                 newFocusedIds.push(...evt.ids);
-              } else if (evt.kind === "detail_block" && evt.data) {
-                newDetailBlocks.push(evt.data as DiagramBlock);
+              } else if (evt.kind === "detail_block") {
+                newDetailBlocks.push(evt.data);
                 setFocused({
                   ids: [...newFocusedIds],
                   blocks: [...newDetailBlocks],
                   arrows: [...newDetailArrows],
                 });
                 setRegenerating(false);
-              } else if (evt.kind === "detail_arrow" && evt.data) {
-                newDetailArrows.push(evt.data as DiagramArrow);
+              } else if (evt.kind === "detail_arrow") {
+                newDetailArrows.push(evt.data);
                 setFocused({
                   ids: [...newFocusedIds],
                   blocks: [...newDetailBlocks],
                   arrows: [...newDetailArrows],
                 });
               }
-            }
-          }
+            },
+          });
           if (controller.signal.aborted) return;
           // Edge: focus event arrived but no detail_block ever did.
           // Commit at least the new ids so the panel reflects the new
