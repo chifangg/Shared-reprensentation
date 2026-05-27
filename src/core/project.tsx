@@ -86,6 +86,17 @@ type ProjectContextValue = {
   setChatMessages: (
     msgs: import("@/core/hooks/useClaudeSession").ClaudeMessage[],
   ) => void;
+  /** True while Claude is mid-turn (between send and stop_reason). Used
+   *  by sibling components (diagram) to know when to clear "pending"
+   *  visual states on user edits. ChatView is the writer. */
+  chatRunning: boolean;
+  setChatRunning: (v: boolean) => void;
+  /** Bumps only on USER-initiated project changes (upload, reset). Does
+   *  NOT change when Claude edits / writes individual files. Sibling
+   *  components (diagram) depend on this to decide when to wipe + reload
+   *  their own state, so Claude adding files mid-turn no longer
+   *  triggers a full diagram reset. */
+  projectKey: number;
 };
 
 const ProjectContext = createContext<ProjectContextValue | null>(null);
@@ -102,6 +113,8 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const [chatMessages, setChatMessages] = useState<
     import("@/core/hooks/useClaudeSession").ClaudeMessage[]
   >([]);
+  const [chatRunning, setChatRunning] = useState(false);
+  const [projectKey, setProjectKey] = useState(0);
 
   const activeFile = useMemo(
     () => files.find((f) => f.path === activePath) ?? null,
@@ -114,6 +127,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     setActivePath(null);
     setGoalState(null);
     setChatThemeState(null);
+    setProjectKey((k) => k + 1);
   }, []);
 
   const setGoal = useCallback((text: string | null) => {
@@ -175,6 +189,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     setActivePath(null);
     setGoalState(null);
     setChatThemeState(null);
+    setProjectKey((k) => k + 1);
   }, []);
 
   return (
@@ -202,6 +217,9 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
         setUploadProgress,
         chatMessages,
         setChatMessages,
+        chatRunning,
+        setChatRunning,
+        projectKey,
       }}
     >
       {children}
@@ -711,8 +729,9 @@ export function buildChatSystemPrompt(
     "  3. Only edit after the user has clearly asked for a change. Never edit speculatively.",
     "  4. Always `read_project_file` an existing file before editing it. For `edit_project_file`, `old_string` must match the file exactly (including indentation) and must be unique — include a few surrounding lines as context if needed.",
     "  5. PREFER `edit_project_file` whenever the change touches less than roughly half the file. Reserve `write_project_file` for creating new files or full rewrites — re-emitting a 30KB body for a 1-line change wastes ~15 seconds per edit.",
-    "  6. After a successful change, summarize what changed in 1–2 sentences. Do not paste the new file back in chat.",
-    "  7. Do NOT call any other tool. There are no shell, search, weather, or flight tools — ignore memories of those from other sessions.",
+    "  6. AVOID `replace_all=true` unless old_string is long and unambiguous (a full identifier of 20+ chars, a multi-word phrase, or a unique snippet). Short common strings (e.g. `server.`, `name`, `this.`, `client.`) will hit unrelated log strings, comments, and other identifiers and silently corrupt the file. The safe default is multiple targeted edit_project_file calls, each with surrounding context to be unique. The tool will refuse short+broad replace_all to prevent this footgun.",
+    "  7. After a successful change, summarize what changed in 1–2 sentences. Do not paste the new file back in chat.",
+    "  8. Do NOT call any other tool. There are no shell, search, weather, or flight tools — ignore memories of those from other sessions.",
     "",
     "Be concise. Read only the files you actually need. Ground explanations in concrete function names from what you read.",
     "",

@@ -122,8 +122,18 @@ fn build_tool_registry() -> core::tools::ToolRegistry {
                 },
                 "replace_all": {
                     "type": "boolean",
-                    "description": "If true, replace every occurrence of \
-                        old_string. Defaults to false."
+                    "description": "If true, replace EVERY occurrence of \
+                        old_string in the file. Defaults to false. \
+                        DANGEROUS — use only when old_string is long and \
+                        unambiguous (a full identifier, a multi-word \
+                        phrase, or a unique snippet). NEVER set this for \
+                        short common substrings like \"server.\", \
+                        \"name\", \"this.\", \"return\", etc. — they will \
+                        match unrelated content (log strings, comments, \
+                        other identifiers) and silently corrupt the \
+                        file. When in doubt, leave this false and emit \
+                        multiple targeted edit_project_file calls, each \
+                        with enough surrounding context to be unique."
                 }
             },
             "required": ["path", "old_string", "new_string"],

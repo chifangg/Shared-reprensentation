@@ -353,6 +353,58 @@ button:focus-visible,
   animation: focus-pulse 1.6s ease-in-out infinite;
 }
 
+/* Marching-ants dashed stroke used on edges the user just pulled,
+ * before Claude has finished reacting. Animates the stroke offset so
+ * the dashes appear to flow in the direction of the arrow. Pair with
+ * a dashed strokeDasharray inline on the edge element. */
+@keyframes pending-edge-march {
+  to { stroke-dashoffset: -20; }
+}
+
+.pending-edge {
+  animation: pending-edge-march 0.9s linear infinite;
+}
+
+/* Pulse used on placeholder blocks (the dashed-border "New module…"
+ * card) while waiting for Claude to scaffold. Blue rings expand and
+ * fade so the block visibly "breathes", making it obvious something
+ * is in flight. Mirrors focus-pulse's structure but in #3B5BD9. */
+@keyframes pending-block-pulse {
+  0%, 100% {
+    box-shadow:
+      0 0 0 0 rgba(59, 91, 217, 0.0),
+      0 0 0 6px rgba(59, 91, 217, 0.18);
+  }
+  50% {
+    box-shadow:
+      0 0 0 4px rgba(59, 91, 217, 0.10),
+      0 0 0 12px rgba(59, 91, 217, 0.22);
+  }
+}
+
+.pending-block-pulse {
+  animation: pending-block-pulse 1.6s ease-in-out infinite;
+}
+
+/* Steady-state "just edited" highlight for blocks/arrows after Claude
+ * settles. Persists until the user takes their next action — that's
+ * dismissRecentEdit on the diagram side. Solid blue ring + tinted
+ * background so it's obvious-but-not-jarring; no animation, since the
+ * marching-ants already conveyed "in flight" during generate. */
+.recent-change-block {
+  border-color: #3B5BD9 !important;
+  background-color: #F4F7FF !important;
+  box-shadow: 0 0 0 2px rgba(59, 91, 217, 0.25);
+}
+
+/* Recent-change style for an SVG edge path. Bumps stroke color +
+ * width so a freshly-drawn arrow stays visibly blue against the
+ * regular grey edges until dismissed. */
+.recent-change-edge {
+  stroke: #3B5BD9 !important;
+  stroke-width: 2 !important;
+}
+
 /* Prose styles for markdown rendering */
 .prose {
   color: var(--color-foreground);

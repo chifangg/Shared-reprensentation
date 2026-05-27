@@ -125,6 +125,25 @@ export function EditProjectFile({
       return;
     }
 
+    // Safety net for the most common replace_all footgun: a short
+    // common substring (like "server." or "name") matched many places
+    // — likely hits unrelated log strings, comments, or other
+    // identifiers and corrupts the file. We refuse here and tell
+    // Claude how to recover so the user doesn't end up with a quietly
+    // mangled file. Long unique strings still go through (e.g.
+    // renaming a 30-char constant across the codebase is fine).
+    if (replaceAll && count > 3 && input.old_string.length < 20) {
+      resolve({
+        ok: false,
+        path,
+        error:
+          `Refused: replace_all with a ${input.old_string.length}-char old_string ("${input.old_string}") would change ${count} occurrences in ${path}. This is the classic footgun — short strings hit unrelated log strings / comments / other identifiers and silently corrupt the file. ` +
+          `Fix: either (a) drop replace_all and emit a separate edit_project_file call per occurrence, each with enough surrounding lines to be unique; or (b) keep replace_all but extend old_string to include enough context (~20+ chars, ideally a full identifier or line fragment) that it can only match the intended places.`,
+        match_count: count,
+      });
+      return;
+    }
+
     const newContent = replaceAll
       ? oldContent.split(input.old_string).join(input.new_string)
       : oldContent.replace(input.old_string, input.new_string);

@@ -2,7 +2,14 @@ import { FileText, FileX } from "lucide-react";
 import type { ToolResultProps } from "@/core/tools/registry";
 
 type Result =
-  | { ok: true; path: string; content: string; size: number }
+  | {
+      ok: true;
+      path: string;
+      content: string;
+      size: number;
+      truncated?: boolean;
+      full_size?: number;
+    }
   | { ok: false; path: string; error: string; available_paths_sample?: string[] };
 
 /**
@@ -55,6 +62,14 @@ export function ReadProjectFileResultCard({ content }: ToolResultProps<Result>) 
       <span className="tabular-nums">
         {lines} {lines === 1 ? "line" : "lines"} · {content.size} bytes
       </span>
+      {content.truncated && (
+        <span
+          className="ml-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800"
+          title={`File is ${content.full_size ?? "?"} bytes; only the first ${content.size} returned`}
+        >
+          truncated · full {content.full_size} bytes
+        </span>
+      )}
     </div>
   );
 }
