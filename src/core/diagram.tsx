@@ -80,6 +80,7 @@ import {
 } from "@/features/diagram/hooks/useChatSettleEffect";
 import { useCanvasFit } from "@/features/diagram/hooks/useCanvasFit";
 import { useViewportFocusFit } from "@/features/diagram/hooks/useViewportFocusFit";
+import { useDiagramBus } from "@/features/diagram/protocol/bus";
 import { dlog, dwarn } from "@/features/diagram/util/debug";
 import { nodeTypes } from "@/features/diagram/components/nodes/BlockNode";
 import { edgeTypes } from "@/features/diagram/components/nodes/LabeledEdge";
@@ -158,6 +159,7 @@ export function DiagramCanvas({ view }: { view: DiagramView }) {
 
 function DiagramCanvasInner({ view }: { view: DiagramView }) {
   const { files, chatMessages, chatRunning, projectKey } = useProject();
+  const bus = useDiagramBus();
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [promoted, setPromoted] = useState<{
@@ -320,14 +322,10 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
         const oldLabel = block.label;
         if (oldLabel === newLabel) return prev;
 
-        window.dispatchEvent(
-          new CustomEvent<VisualEditDetail>(VISUAL_EDIT_EVENT, {
-            detail: {
-              prompt: composeRenamePrompt(block, newLabel),
-              kind: "rename",
-            },
-          }),
-        );
+        bus.emit("visual-edit", {
+          prompt: composeRenamePrompt(block, newLabel),
+          kind: "rename",
+        });
 
         return {
           kind: "ready",
@@ -352,16 +350,12 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
   const dispatchSuggestionsRound1 = useCallback(
     (target: EditTarget) => {
       if (state.kind !== "ready") return;
-      window.dispatchEvent(
-        new CustomEvent<VisualEditDetail>(VISUAL_EDIT_EVENT, {
-          detail: {
-            prompt: composeSuggestionsRound1Prompt(target, state.schema),
-            kind: "suggestions-round1",
-          },
-        }),
-      );
+      bus.emit("visual-edit", {
+        prompt: composeSuggestionsRound1Prompt(target, state.schema),
+        kind: "suggestions-round1",
+      });
     },
-    [state],
+    [state, bus],
   );
 
   /**
@@ -386,22 +380,18 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
           detail: { target, option: synthOption },
         }),
       );
-      window.dispatchEvent(
-        new CustomEvent<VisualEditDetail>(VISUAL_EDIT_EVENT, {
-          detail: {
-            prompt: composeExecuteDirectPrompt(
-              target,
-              state.schema,
-              files,
-              trimmed,
-              synthOption.title,
-            ),
-            kind: "execute-direct",
-          },
-        }),
-      );
+      bus.emit("visual-edit", {
+        prompt: composeExecuteDirectPrompt(
+          target,
+          state.schema,
+          files,
+          trimmed,
+          synthOption.title,
+        ),
+        kind: "execute-direct",
+      });
     },
-    [state, files],
+    [state, files, bus],
   );
 
   /**
@@ -609,19 +599,15 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
           detail: { target, option },
         }),
       );
-      window.dispatchEvent(
-        new CustomEvent<VisualEditDetail>(VISUAL_EDIT_EVENT, {
-          detail: {
-            prompt: composeExecuteOptionPrompt(
-              target,
-              state.schema,
-              files,
-              option,
-            ),
-            kind: "execute-option",
-          },
-        }),
-      );
+      bus.emit("visual-edit", {
+        prompt: composeExecuteOptionPrompt(
+          target,
+          state.schema,
+          files,
+          option,
+        ),
+        kind: "execute-option",
+      });
       setPendingOptions(null);
     },
     [pendingOptions, state, files],

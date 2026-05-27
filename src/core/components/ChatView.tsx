@@ -16,15 +16,14 @@ import { useProject, buildChatSystemPrompt } from "@/core/project";
 import {
   ARROWS_ADDED_EVENT,
   OPTIONS_READY_EVENT,
-  VISUAL_EDIT_EVENT,
   parseTargetMetadata,
   parseVisualEditMessage,
   type ArrowsAddedDetail,
   type ConnectionOption,
   type EditTarget,
   type OptionsReadyDetail,
-  type VisualEditDetail,
 } from "@/core/diagram";
+import { useDiagramBusSubscribe } from "@/features/diagram/protocol/bus";
 
 /**
  * Default customer-facing chat view. Renders turns as bubbles, collapses
@@ -72,21 +71,13 @@ export function ChatView({ model }: { model?: string }) {
   };
 
   // Bridge: diagram-side visual edits (e.g. inline-rename a block)
-  // dispatch a VISUAL_EDIT_EVENT carrying a pre-formatted prompt; we
-  // route it through the same `handleSend` path so the visual edit
+  // emit a "visual-edit" bus message carrying a pre-formatted prompt;
+  // we route it through the same `handleSend` path so the visual edit
   // shows up in conversation alongside typed messages.
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent<VisualEditDetail>).detail;
-      if (!detail?.prompt) return;
-      if (running) return; // ignore mid-turn; Claude is busy
-      handleSend(detail.prompt);
-    };
-    window.addEventListener(VISUAL_EDIT_EVENT, handler);
-    return () => window.removeEventListener(VISUAL_EDIT_EVENT, handler);
-    // `handleSend` is recreated each render but only reads stable refs
-    // (session, files, hasFiles). Re-subscribing on each render is
-    // cheap and keeps it from going stale.
+  useDiagramBusSubscribe("visual-edit", (detail) => {
+    if (!detail?.prompt) return;
+    if (running) return; // ignore mid-turn; Claude is busy
+    handleSend(detail.prompt);
   });
 
   const turns = useMemo(() => projectTurns(session.messages), [session.messages]);
