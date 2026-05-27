@@ -7,7 +7,6 @@ import {
   Controls,
   useNodesState,
   useEdgesState,
-  useReactFlow,
   type Connection,
   type Edge,
   type Node,
@@ -59,15 +58,14 @@ export {
 // chat-facing parsers so ChatView keeps its existing import path.
 import { layoutSchema } from "@/features/diagram/layout/layoutSchema";
 import {
-  VISUAL_EDIT_SENTINEL_PREFIX,
-  VISUAL_EDIT_SENTINEL_SUFFIX,
-  buildTargetSentinel,
   parseTargetMetadata,
   parseVisualEditMessage,
 } from "@/features/diagram/protocol/sentinels";
 import {
-  buildArrowJsonSuffix,
-  buildFileTreeBlock,
+  composeExecuteDirectPrompt,
+  composeExecuteOptionPrompt,
+  composeRenamePrompt,
+  composeSuggestionsRound1Prompt,
 } from "@/features/diagram/protocol/prompts";
 import { useDiagramStructureFetch } from "@/features/diagram/hooks/useDiagramStructureFetch";
 import { useAdaptiveFocus } from "@/features/diagram/hooks/useAdaptiveFocus";
@@ -80,6 +78,8 @@ import {
   useChatSettleEffect,
   type ChosenOption,
 } from "@/features/diagram/hooks/useChatSettleEffect";
+import { useCanvasFit } from "@/features/diagram/hooks/useCanvasFit";
+import { useViewportFocusFit } from "@/features/diagram/hooks/useViewportFocusFit";
 import { nodeTypes } from "@/features/diagram/components/nodes/BlockNode";
 import { edgeTypes } from "@/features/diagram/components/nodes/LabeledEdge";
 import { DiagramViewSwitcher } from "@/features/diagram/components/DiagramViewSwitcher";
@@ -157,7 +157,6 @@ export function DiagramCanvas({ view }: { view: DiagramView }) {
 
 function DiagramCanvasInner({ view }: { view: DiagramView }) {
   const { files, chatMessages, chatRunning, projectKey } = useProject();
-  const { fitView } = useReactFlow();
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [promoted, setPromoted] = useState<{
@@ -320,34 +319,12 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
         const oldLabel = block.label;
         if (oldLabel === newLabel) return prev;
 
-        const files = block.provenance?.files ?? [];
-        const fns = block.provenance?.functions ?? [];
-        const summary = `Renamed block: ${oldLabel} → ${newLabel}`;
-        // The sentinel on line 1 lets the chat renderer collapse the
-        // long prompt body into a one-line bubble (full text still goes
-        // to Claude — model just ignores the marker line).
-        const prompt = [
-          `${VISUAL_EDIT_SENTINEL_PREFIX}${summary}${VISUAL_EDIT_SENTINEL_SUFFIX}`,
-          "",
-          `[Diagram edit] User renamed block "${oldLabel}" → "${newLabel}" in the project diagram.`,
-          "",
-          "Block context:",
-          `- Caption: ${block.caption}`,
-          files.length > 0
-            ? `- Files: ${files.join(", ")}`
-            : "- Files: (none recorded)",
-          fns.length > 0
-            ? `- Functions in this block: ${fns.join(", ")}`
-            : "- Functions: (none recorded)",
-          "",
-          `Please rename the identifier(s) in those files that correspond to this block so they reflect the new name "${newLabel}". The block label is descriptive — translate it to the appropriate code form (e.g. a class declaration, module name, or related identifier; preserve the casing convention already used in the file). Use \`edit_project_file\` for each change.`,
-          "",
-          `If you can't confidently determine which identifier this block refers to, make your best guess and clearly summarize what you changed in 1–2 sentences so the user can verify or revert.`,
-        ].join("\n");
-
         window.dispatchEvent(
           new CustomEvent<VisualEditDetail>(VISUAL_EDIT_EVENT, {
-            detail: { prompt, kind: "rename" },
+            detail: {
+              prompt: composeRenamePrompt(block, newLabel),
+              kind: "rename",
+            },
           }),
         );
 
@@ -362,72 +339,7 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
         };
       });
     },
-    [],
-  );
-
-  /**
-   * Build the "this is what the target looks like" lines used in both
-   * round-1 (suggestions) and round-2 (execute) prompts. Centralized
-   * so arrow / block / new-block all describe their context the same
-   * way and we don't duplicate the if-block-else-arrow-else-new-block
-   * branching twice.
-   */
-  const buildTargetContextLines = useCallback(
-    (target: EditTarget, schema: DiagramSchema): string[] => {
-      const block = (id: string) => schema.blocks.find((b) => b.id === id);
-      const line = (
-        label: string,
-        files: string[],
-        fns: string[],
-        caption: string,
-      ): string[] => [
-        `${label}:`,
-        `- Caption: ${caption}`,
-        files.length > 0
-          ? `- Files: ${files.join(", ")}`
-          : "- Files: (none recorded)",
-        fns.length > 0
-          ? `- Functions: ${fns.join(", ")}`
-          : "- Functions: (none recorded)",
-      ];
-      if (target.kind === "arrow") {
-        const from = block(target.from);
-        const to = block(target.to);
-        if (!from || !to) return [];
-        return [
-          ...line(
-            `Source block ("${from.label}")`,
-            from.provenance?.files ?? [],
-            from.provenance?.functions ?? [],
-            from.caption,
-          ),
-          "",
-          ...line(
-            `Target block ("${to.label}")`,
-            to.provenance?.files ?? [],
-            to.provenance?.functions ?? [],
-            to.caption,
-          ),
-        ];
-      }
-      if (target.kind === "block") {
-        const b = block(target.id);
-        if (!b) return [];
-        return line(
-          `Block ("${b.label}")`,
-          b.provenance?.files ?? [],
-          b.provenance?.functions ?? [],
-          b.caption,
-        );
-      }
-      // new-block: no specific block context, just give project shape.
-      const labels = schema.blocks
-        .filter((b) => !b.pending)
-        .map((b) => b.label)
-        .join(", ");
-      return [`Existing blocks on the diagram: ${labels || "(none)"}.`];
-    },
-    [],
+    [setState],
   );
 
   /**
@@ -439,62 +351,16 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
   const dispatchSuggestionsRound1 = useCallback(
     (target: EditTarget) => {
       if (state.kind !== "ready") return;
-      const ctx = buildTargetContextLines(target, state.schema);
-      let intro: string;
-      let kindGuide: string[];
-      if (target.kind === "arrow") {
-        intro = `User drew a new arrow on the diagram and wants suggestions for what it should mean.`;
-        kindGuide = [
-          `\`kind\` guide:`,
-          `- "block_level": real new cross-block dependency (import / fetch / subscription). Provide a short \`label\` (e.g. "imports", "fetches").`,
-          `- "detail": small inline change in one block; no new arrow needed.`,
-          `- "none": already connected / no change required.`,
-        ];
-      } else if (target.kind === "block") {
-        intro = `User clicked the "actions" affordance on a block and wants suggestions for what to do with it.`;
-        kindGuide = [
-          `\`kind\` guide: use "detail" for actual code changes, "none" for "no change needed". Don't use "block_level" here.`,
-        ];
-      } else {
-        intro = `User wants to ADD A NEW MODULE to the project and wants suggestions for what to scaffold.`;
-        kindGuide = [`\`kind\` guide: use "detail" for all options here.`];
-      }
-      const summary =
-        target.kind === "arrow"
-          ? `Suggestions for connection`
-          : target.kind === "block"
-            ? `Suggestions for block action`
-            : `Suggestions for new module`;
-      const prompt = [
-        `${VISUAL_EDIT_SENTINEL_PREFIX}${summary}${VISUAL_EDIT_SENTINEL_SUFFIX}`,
-        buildTargetSentinel(target),
-        "",
-        `[Diagram edit, round 1 of 2] ${intro}`,
-        "",
-        ...ctx,
-        "",
-        `DO NOT CHANGE ANY CODE. Propose 3–5 concrete options. Be terse — \`title\` ≤8 words, \`detail\` ≤1 sentence (~15 words). No fluff.`,
-        "",
-        `Return ONLY a single fenced JSON code block:`,
-        "```json",
-        `{`,
-        `  "options": [`,
-        `    { "title": "...", "detail": "...", "kind": "block_level|detail|none", "label": "..." }`,
-        `  ]`,
-        `}`,
-        "```",
-        "",
-        ...kindGuide,
-        "",
-        `Output ONLY the JSON, no surrounding prose.`,
-      ].join("\n");
       window.dispatchEvent(
         new CustomEvent<VisualEditDetail>(VISUAL_EDIT_EVENT, {
-          detail: { prompt, kind: "suggestions-round1" },
+          detail: {
+            prompt: composeSuggestionsRound1Prompt(target, state.schema),
+            kind: "suggestions-round1",
+          },
         }),
       );
     },
-    [state, buildTargetContextLines],
+    [state],
   );
 
   /**
@@ -508,7 +374,6 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
   const dispatchExecuteDirect = useCallback(
     (target: EditTarget, userText: string) => {
       if (state.kind !== "ready") return;
-      const ctx = buildTargetContextLines(target, state.schema);
       const trimmed = userText.trim();
       const synthOption: ConnectionOption = {
         title: trimmed.length > 60 ? `${trimmed.slice(0, 57)}…` : trimmed,
@@ -520,55 +385,22 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
           detail: { target, option: synthOption },
         }),
       );
-
-      let intro: string;
-      if (target.kind === "arrow") {
-        intro = `User drew a new arrow on the diagram and described what they want it to mean.`;
-      } else if (target.kind === "block") {
-        intro = `User clicked a block's "actions" affordance and described what they want done.`;
-      } else {
-        intro = `User wants to add a new module and described what it should be.`;
-      }
-      const summary = `User-described: ${synthOption.title}`;
-      const prompt = [
-        `${VISUAL_EDIT_SENTINEL_PREFIX}${summary}${VISUAL_EDIT_SENTINEL_SUFFIX}`,
-        buildTargetSentinel(target),
-        "",
-        `[Diagram edit] ${intro}`,
-        "",
-        `User's description:`,
-        `"${trimmed}"`,
-        "",
-        ...ctx,
-        "",
-        `FIRST decide whether this description is concrete enough to act on.`,
-        "",
-        `If the description is concrete (a specific change you can implement in 1–3 file edits with high confidence):`,
-        `→ Realize it in code. Use \`read_project_file\` to confirm the relevant files, then \`edit_project_file\` (or \`write_project_file\` for new files). Keep edits minimal. Briefly summarize in 1–2 sentences.`,
-        ...buildFileTreeBlock(files.map((f) => f.path)),
-        ...buildArrowJsonSuffix(
-          target.kind === "new-block" ? synthOption.title : "",
-          state.schema.blocks
-            .filter((b) => !b.pending)
-            .map((b) => b.label),
-        ),
-        "",
-        `If the description is VAGUE or OPEN-ENDED (e.g. "add features", "make this better", "improve performance", "refactor", "clean up", "add tests" with no specifics, etc.):`,
-        `→ DO NOT touch code. Instead respond with ONLY a JSON options block (same shape as round-1 suggestions), proposing 3–5 concrete interpretations the user might have meant. The user will then pick one:`,
-        "",
-        "```json",
-        `{ "options": [ { "title": "...", "detail": "...", "kind": "block_level|detail|none", "label": "..." } ] }`,
-        "```",
-        "",
-        `Be honest about vagueness — if you're guessing at intent, fall back to options. The cost of executing the wrong thing is high; the cost of asking one extra round is low.`,
-      ].join("\n");
       window.dispatchEvent(
         new CustomEvent<VisualEditDetail>(VISUAL_EDIT_EVENT, {
-          detail: { prompt, kind: "execute-direct" },
+          detail: {
+            prompt: composeExecuteDirectPrompt(
+              target,
+              state.schema,
+              files,
+              trimmed,
+              synthOption.title,
+            ),
+            kind: "execute-direct",
+          },
         }),
       );
     },
-    [state, buildTargetContextLines, files],
+    [state, files],
   );
 
   /**
@@ -767,6 +599,7 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
   const handlePickOption = useCallback(
     (option: ConnectionOption) => {
       if (!pendingOptions) return;
+      if (state.kind !== "ready") return;
       const { target } = pendingOptions;
 
       window.dispatchEvent(
@@ -774,52 +607,15 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
           detail: { target, option },
         }),
       );
-
-      const summary = `Executing: ${option.title}`;
-      const promptLines = [
-        `${VISUAL_EDIT_SENTINEL_PREFIX}${summary}${VISUAL_EDIT_SENTINEL_SUFFIX}`,
-        buildTargetSentinel(target),
-        "",
-        `[Diagram edit, round 2 of 2] User picked this option:`,
-        "",
-        `Title: ${option.title}`,
-        `Detail: ${option.detail}`,
-        `Kind: ${option.kind}`,
-      ];
-      if (
-        target.kind === "arrow" &&
-        option.kind === "block_level" &&
-        option.label
-      ) {
-        promptLines.push(
-          `Arrow label (already shown on diagram): ${option.label}`,
-        );
-      }
-      promptLines.push(
-        "",
-        option.kind === "none"
-          ? `The user picked an option with kind="none" — confirm in 1 sentence why no code change is needed. Do NOT use edit_project_file.`
-          : `Now realize this change in code. Use \`read_project_file\` to confirm the relevant files, then \`edit_project_file\` (or \`write_project_file\` if creating new files) to make the edit. Keep the change minimal and focused on what this option described. Briefly summarize in 1–2 sentences.`,
-      );
-      if (option.kind !== "none") {
-        promptLines.push(...buildFileTreeBlock(files.map((f) => f.path)));
-        const newBlockLabel =
-          target.kind === "new-block" ? option.title.slice(0, 40) : "";
-        const existingLabels =
-          state.kind === "ready"
-            ? state.schema.blocks
-                .filter((b) => !b.pending)
-                .map((b) => b.label)
-            : [];
-        promptLines.push(
-          ...buildArrowJsonSuffix(newBlockLabel, existingLabels),
-        );
-      }
-
       window.dispatchEvent(
         new CustomEvent<VisualEditDetail>(VISUAL_EDIT_EVENT, {
           detail: {
-            prompt: promptLines.join("\n"),
+            prompt: composeExecuteOptionPrompt(
+              target,
+              state.schema,
+              files,
+              option,
+            ),
             kind: "execute-option",
           },
         }),
@@ -1045,91 +841,10 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
   }, [state, selectedId, focused, view, promoted, setNodes, setEdges, attachInteractive, tagRecentEdges]);
 
   // Camera pan to focused base block(s) when a focus delta arrives.
-  // Detail content lives in the side panel now, so we only fit the
-  // base blocks the chat is talking about. Wait long enough for the
-  // panel slide-in to finish so the canvas viewport has its real size.
-  useEffect(() => {
-    if (view !== "focus") return;
-    if (!focused) return;
-    if (focused.ids.length === 0) return;
-    const t = window.setTimeout(() => {
-      fitView({
-        nodes: focused.ids.map((id) => ({ id })),
-        padding: 0.3,
-        duration: 700,
-        maxZoom: 1.3,
-        minZoom: 0.5,
-      });
-    }, 320);
-    return () => window.clearTimeout(t);
-  }, [focused, view, fitView]);
+  useViewportFocusFit({ view, focused });
 
-  // Auto-fit viewport whenever the node set grows during streaming, so
-  // the canvas keeps pace with new blocks instead of leaving the user
-  // staring at empty whitespace if Claude lays things out off-screen.
-  useEffect(() => {
-    if (nodes.length === 0) return;
-    const t = window.setTimeout(() => {
-      fitView({ padding: 0.15, duration: 400, maxZoom: 1.6 });
-    }, 60);
-    return () => window.clearTimeout(t);
-  }, [nodes.length, fitView]);
-
-  // Final fit after streaming completes — edges may have arrived after
-  // the last node-trigger, and dagre may have shifted positions.
-  useEffect(() => {
-    if (state.kind !== "ready") return;
-    if (nodes.length === 0) return;
-    const t = window.setTimeout(() => {
-      fitView({ padding: 0.15, duration: 500, maxZoom: 1.6 });
-    }, 120);
-    return () => window.clearTimeout(t);
-  }, [state, fitView, nodes.length]);
-
-  // Recenter the viewport whenever the canvas's available width
-  // changes — the side panel sliding in/out, the user dragging the
-  // resize handle, the window itself resizing. Without this, growing
-  // the panel pushes the diagram off the visible area and shrinking
-  // it leaves a lopsided composition.
-  const canvasContainerRef = useRef<HTMLDivElement | null>(null);
-  const fitFnRef = useRef<() => void>(() => {});
-  fitFnRef.current = () => {
-    if (state.kind !== "ready") return;
-    if (nodes.length === 0) return;
-    if (view === "focus" && focused && focused.ids.length > 0) {
-      fitView({
-        nodes: focused.ids.map((id) => ({ id })),
-        padding: 0.3,
-        duration: 220,
-        maxZoom: 1.3,
-        minZoom: 0.5,
-      });
-    } else {
-      fitView({ padding: 0.15, duration: 220, maxZoom: 1.6 });
-    }
-  };
-  useEffect(() => {
-    const el = canvasContainerRef.current;
-    if (!el) return;
-    let timer: number | undefined;
-    let isFirst = true;
-    const ro = new ResizeObserver(() => {
-      // Skip the very first observation — that's the initial mount,
-      // already handled by React Flow's `fitView` prop and the streaming
-      // effects above. We only want to react to subsequent size changes.
-      if (isFirst) {
-        isFirst = false;
-        return;
-      }
-      if (timer !== undefined) window.clearTimeout(timer);
-      timer = window.setTimeout(() => fitFnRef.current(), 80);
-    });
-    ro.observe(el);
-    return () => {
-      if (timer !== undefined) window.clearTimeout(timer);
-      ro.disconnect();
-    };
-  }, []);
+  // Auto-fit during streaming + final fit + ResizeObserver-driven refit.
+  const canvasContainerRef = useCanvasFit({ state, view, focused, nodes });
 
   const panelOpen =
     view === "focus" &&
