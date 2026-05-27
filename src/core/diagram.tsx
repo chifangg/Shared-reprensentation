@@ -80,7 +80,10 @@ import {
 } from "@/features/diagram/hooks/useChatSettleEffect";
 import { useCanvasFit } from "@/features/diagram/hooks/useCanvasFit";
 import { useViewportFocusFit } from "@/features/diagram/hooks/useViewportFocusFit";
-import { useDiagramBus } from "@/features/diagram/protocol/bus";
+import {
+  useDiagramBus,
+  useDiagramBusSubscribe,
+} from "@/features/diagram/protocol/bus";
 import { dlog, dwarn } from "@/features/diagram/util/debug";
 import { nodeTypes } from "@/features/diagram/components/nodes/BlockNode";
 import { edgeTypes } from "@/features/diagram/components/nodes/LabeledEdge";
@@ -96,49 +99,17 @@ import { DiagramFocusPanel } from "@/features/diagram/components/panel/DiagramFo
 
 export { parseTargetMetadata, parseVisualEditMessage, DiagramViewSwitcher };
 
-/**
- * Custom DOM event the diagram uses to push prompts into the chat
- * session (which lives in <ChatView>, a sibling component). Carries a
- * pre-formatted user-message prompt; ChatView listens and calls its
- * `handleSend` so the visual edit shows up in conversation alongside
- * typed messages.
- */
-export const VISUAL_EDIT_EVENT = "app:diagram-visual-edit";
-
-// EditTarget, serializeTarget, ConnectionOption, OptionsReadyDetail,
-// OptionExecutedDetail, ArrowsAddedDetail moved to
-// @/features/diagram/types.ts (imported above). The event-name string
-// constants below stay until the typed bus migration (commit 11).
-
-/**
- * Fired by the chat side once it has parsed Claude's round-1 JSON
- * options response. The diagram listens and renders the cards as a
- * floating overlay on the canvas, so the user picks "on the diagram"
- * rather than "in chat".
- */
-export const OPTIONS_READY_EVENT = "app:diagram-options-ready";
-
-/**
- * Fired by an option card on the canvas once the user has picked which
- * concrete change should happen. Carries the target + picked option.
- * Diagram's chatRunning effect uses this to finalize per-target state
- * (e.g. arrow kind → keep + label vs drop) after Claude executes.
- */
-export const OPTION_EXECUTED_EVENT = "app:diagram-option-executed";
-
-/**
- * Fired by ChatView when Claude's round-2 response includes a trailing
- * `added_arrows` JSON block (see buildArrowJsonSuffix). The diagram
- * resolves block labels → ids and adds the arrows live, with
- * marching-ants until chatRunning settles.
- */
-export const ARROWS_ADDED_EVENT = "app:diagram-arrows-added";
-
 // Sentinels (VISUAL_EDIT_ARROW_*, VISUAL_EDIT_BLOCK_*, VISUAL_EDIT_NEW_BLOCK,
 // VISUAL_EDIT_SENTINEL_*), buildTargetSentinel, parseTargetMetadata,
 // parseVisualEditMessage moved to @/features/diagram/protocol/sentinels.
 // buildArrowJsonSuffix + buildFileTreeBlock moved to
 // @/features/diagram/protocol/prompts. Imported above.
+//
+// The four window-event string constants (VISUAL_EDIT_EVENT etc.) plus
+// their *Detail interfaces have been replaced by the typed
+// DiagramBusMessageMap in @/features/diagram/protocol/events. Both
+// sides now emit/subscribe through the bus from
+// @/features/diagram/protocol/bus.
 
 // BlockNode + nodeTypes moved to @/features/diagram/components/nodes/BlockNode.
 // LabeledEdge + edgeTypes moved to @/features/diagram/components/nodes/LabeledEdge.
@@ -375,11 +346,7 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
         detail: "User-described change.",
         kind: "detail",
       };
-      window.dispatchEvent(
-        new CustomEvent<OptionExecutedDetail>(OPTION_EXECUTED_EVENT, {
-          detail: { target, option: synthOption },
-        }),
-      );
+      bus.emit("option-executed", { target, option: synthOption });
       bus.emit("visual-edit", {
         prompt: composeExecuteDirectPrompt(
           target,
@@ -444,49 +411,43 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
   const chosenOptionsRef = useRef(
     new Map<string, ChosenOption>(), // key = serializeTarget(target)
   );
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent<OptionExecutedDetail>).detail;
-      if (!detail) return;
-      chosenOptionsRef.current.set(serializeTarget(detail.target), {
-        target: detail.target,
-        option: detail.option,
-      });
+  useDiagramBusSubscribe("option-executed", (detail) => {
+    if (!detail) return;
+    chosenOptionsRef.current.set(serializeTarget(detail.target), {
+      target: detail.target,
+      option: detail.option,
+    });
 
-      // For new-block: rename the next unclaimed placeholder eagerly so
-      // any ARROWS_ADDED Claude emits during this turn can resolve its
-      // label. Without this, the placeholder stays "New module…" until
-      // the chatRunning settle runs (after Claude is fully done), so any
-      // mid-stream ARROWS_ADDED → resolveId silently drops every arrow
-      // pointing at the new block. We keep `pending: true` so the dashed
-      // border still signals "Claude is implementing this".
-      if (detail.target.kind === "new-block") {
-        setState((prev) => {
-          if (prev.kind !== "ready") return prev;
-          let claimed = false;
-          const nextBlocks = prev.schema.blocks.map((b) => {
-            if (claimed) return b;
-            if (!b.pending || !b.id.startsWith("__pending_new_")) return b;
-            if (b.label !== "New module…") return b;
-            claimed = true;
-            return {
-              ...b,
-              label: detail.option.title.slice(0, 40),
-              caption:
-                detail.option.detail.slice(0, 200) || b.caption,
-            };
-          });
-          if (!claimed) return prev;
+    // For new-block: rename the next unclaimed placeholder eagerly so
+    // any arrows-added Claude emits during this turn can resolve its
+    // label. Without this, the placeholder stays "New module…" until
+    // the chatRunning settle runs (after Claude is fully done), so any
+    // mid-stream arrows-added → resolveId silently drops every arrow
+    // pointing at the new block. We keep `pending: true` so the dashed
+    // border still signals "Claude is implementing this".
+    if (detail.target.kind === "new-block") {
+      setState((prev) => {
+        if (prev.kind !== "ready") return prev;
+        let claimed = false;
+        const nextBlocks = prev.schema.blocks.map((b) => {
+          if (claimed) return b;
+          if (!b.pending || !b.id.startsWith("__pending_new_")) return b;
+          if (b.label !== "New module…") return b;
+          claimed = true;
           return {
-            kind: "ready",
-            schema: { blocks: nextBlocks, arrows: prev.schema.arrows },
+            ...b,
+            label: detail.option.title.slice(0, 40),
+            caption: detail.option.detail.slice(0, 200) || b.caption,
           };
         });
-      }
-    };
-    window.addEventListener(OPTION_EXECUTED_EVENT, handler);
-    return () => window.removeEventListener(OPTION_EXECUTED_EVENT, handler);
-  }, []);
+        if (!claimed) return prev;
+        return {
+          kind: "ready",
+          schema: { blocks: nextBlocks, arrows: prev.schema.arrows },
+        };
+      });
+    }
+  });
 
   /**
    * Receive parsed round-1 options from ChatView and surface them as
@@ -496,16 +457,11 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
    * Claude bailed out with options instead of executing (we'd have
    * pre-fired OPTION_EXECUTED_EVENT optimistically; cancel it).
    */
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent<OptionsReadyDetail>).detail;
-      if (!detail) return;
-      chosenOptionsRef.current.delete(serializeTarget(detail.target));
-      setPendingOptions({ target: detail.target, options: detail.options });
-    };
-    window.addEventListener(OPTIONS_READY_EVENT, handler);
-    return () => window.removeEventListener(OPTIONS_READY_EVENT, handler);
-  }, []);
+  useDiagramBusSubscribe("options-ready", (detail) => {
+    if (!detail) return;
+    chosenOptionsRef.current.delete(serializeTarget(detail.target));
+    setPendingOptions({ target: detail.target, options: detail.options });
+  });
 
   /**
    * ChatView dispatches this when Claude's response includes a trailing
@@ -515,72 +471,67 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
    * (same from→to direction) and unresolved labels are silently
    * dropped — Claude sometimes hallucinates labels.
    */
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent<ArrowsAddedDetail>).detail;
-      if (!detail || detail.arrows.length === 0) return;
-      dlog("recent-debug:ARROWS_ADDED handler", {
-        detailArrows: detail.arrows,
-      });
-      setState((prev) => {
-        if (prev.kind !== "ready") return prev;
-        const resolveId = (label: string): string | null => {
-          const lc = label.trim().toLowerCase();
-          const exact = prev.schema.blocks.find(
-            (b) => b.label.toLowerCase() === lc,
+  useDiagramBusSubscribe("arrows-added", (detail) => {
+    if (!detail || detail.arrows.length === 0) return;
+    dlog("recent-debug:arrows-added handler", {
+      detailArrows: detail.arrows,
+    });
+    setState((prev) => {
+      if (prev.kind !== "ready") return prev;
+      const resolveId = (label: string): string | null => {
+        const lc = label.trim().toLowerCase();
+        const exact = prev.schema.blocks.find(
+          (b) => b.label.toLowerCase() === lc,
+        );
+        if (exact) return exact.id;
+        // Fuzzy: substring match either way.
+        const fuzzy = prev.schema.blocks.find(
+          (b) =>
+            b.label.toLowerCase().includes(lc) ||
+            lc.includes(b.label.toLowerCase()),
+        );
+        if (!fuzzy) {
+          // Surface mismatches in dev — silently dropping arrows
+          // makes it impossible to tell whether Claude forgot to
+          // emit them vs. emitted wrong labels.
+          dwarn(
+            "diagram",
+            `added_arrows label "${label}" did not match any block. Existing labels:`,
+            prev.schema.blocks.map((b) => b.label),
           );
-          if (exact) return exact.id;
-          // Fuzzy: substring match either way.
-          const fuzzy = prev.schema.blocks.find(
-            (b) =>
-              b.label.toLowerCase().includes(lc) ||
-              lc.includes(b.label.toLowerCase()),
-          );
-          if (!fuzzy) {
-            // Surface mismatches in dev — silently dropping arrows
-            // makes it impossible to tell whether Claude forgot to
-            // emit them vs. emitted wrong labels.
-            dwarn(
-              "diagram",
-              `added_arrows label "${label}" did not match any block. Existing labels:`,
-              prev.schema.blocks.map((b) => b.label),
-            );
-          }
-          return fuzzy?.id ?? null;
-        };
-        const toAdd: DiagramArrow[] = [];
-        for (const a of detail.arrows) {
-          const from = resolveId(a.from);
-          const to = resolveId(a.to);
-          if (!from || !to || from === to) continue;
-          const duplicate = prev.schema.arrows.some(
-            (x) => x.from === from && x.to === to,
-          );
-          if (duplicate) continue;
-          if (toAdd.some((x) => x.from === from && x.to === to)) continue;
-          toAdd.push({
-            from,
-            to,
-            label: a.label?.trim() || "uses",
-            pending: "claude",
-          });
         }
-        if (toAdd.length === 0) return prev;
-        dlog("recent-debug:ARROWS_ADDED applied", {
-          toAdd: toAdd.map((a) => `${a.from}->${a.to}(${a.label})`),
+        return fuzzy?.id ?? null;
+      };
+      const toAdd: DiagramArrow[] = [];
+      for (const a of detail.arrows) {
+        const from = resolveId(a.from);
+        const to = resolveId(a.to);
+        if (!from || !to || from === to) continue;
+        const duplicate = prev.schema.arrows.some(
+          (x) => x.from === from && x.to === to,
+        );
+        if (duplicate) continue;
+        if (toAdd.some((x) => x.from === from && x.to === to)) continue;
+        toAdd.push({
+          from,
+          to,
+          label: a.label?.trim() || "uses",
+          pending: "claude",
         });
-        return {
-          kind: "ready",
-          schema: {
-            blocks: prev.schema.blocks,
-            arrows: [...prev.schema.arrows, ...toAdd],
-          },
-        };
+      }
+      if (toAdd.length === 0) return prev;
+      dlog("recent-debug:arrows-added applied", {
+        toAdd: toAdd.map((a) => `${a.from}->${a.to}(${a.label})`),
       });
-    };
-    window.addEventListener(ARROWS_ADDED_EVENT, handler);
-    return () => window.removeEventListener(ARROWS_ADDED_EVENT, handler);
-  }, []);
+      return {
+        kind: "ready",
+        schema: {
+          blocks: prev.schema.blocks,
+          arrows: [...prev.schema.arrows, ...toAdd],
+        },
+      };
+    });
+  });
 
   /**
    * User picked a card (or submitted "Others"). Fire OPTION_EXECUTED
@@ -594,11 +545,7 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
       if (state.kind !== "ready") return;
       const { target } = pendingOptions;
 
-      window.dispatchEvent(
-        new CustomEvent<OptionExecutedDetail>(OPTION_EXECUTED_EVENT, {
-          detail: { target, option },
-        }),
-      );
+      bus.emit("option-executed", { target, option });
       bus.emit("visual-edit", {
         prompt: composeExecuteOptionPrompt(
           target,

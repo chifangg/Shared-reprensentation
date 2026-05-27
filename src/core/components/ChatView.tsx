@@ -14,16 +14,15 @@ import {
 import { Bot, User, Upload, Sparkles } from "lucide-react";
 import { useProject, buildChatSystemPrompt } from "@/core/project";
 import {
-  ARROWS_ADDED_EVENT,
-  OPTIONS_READY_EVENT,
   parseTargetMetadata,
   parseVisualEditMessage,
-  type ArrowsAddedDetail,
   type ConnectionOption,
   type EditTarget,
-  type OptionsReadyDetail,
 } from "@/core/diagram";
-import { useDiagramBusSubscribe } from "@/features/diagram/protocol/bus";
+import {
+  useDiagramBus,
+  useDiagramBusSubscribe,
+} from "@/features/diagram/protocol/bus";
 
 /**
  * Default customer-facing chat view. Renders turns as bubbles, collapses
@@ -638,10 +637,11 @@ function stripJsonCodeBlocks(text: string): string {
 }
 
 /** Invisible component: when its `text` contains an `added_arrows`
- *  JSON block, fires ARROWS_ADDED_EVENT exactly once per unique
- *  payload. Lives next to the markdown render so the dispatch happens
- *  as soon as the streaming text settles. */
+ *  JSON block, emits "arrows-added" on the diagram bus exactly once
+ *  per unique payload. Lives next to the markdown render so the
+ *  emit happens as soon as the streaming text settles. */
 function ArrowsAddedSink({ text }: { text: string }) {
+  const bus = useDiagramBus();
   const parsed = useMemo(() => parseAddedArrowsBlock(text), [text]);
   const key = useMemo(
     () =>
@@ -655,12 +655,8 @@ function ArrowsAddedSink({ text }: { text: string }) {
     if (!parsed || !key) return;
     if (lastKeyRef.current === key) return;
     lastKeyRef.current = key;
-    window.dispatchEvent(
-      new CustomEvent<ArrowsAddedDetail>(ARROWS_ADDED_EVENT, {
-        detail: { arrows: parsed.arrows },
-      }),
-    );
-  }, [parsed, key]);
+    bus.emit("arrows-added", { arrows: parsed.arrows });
+  }, [parsed, key, bus]);
   return null;
 }
 
@@ -701,8 +697,8 @@ function parseAddedArrowsBlock(
  * The chat-side stub for the cards UI. We parse Claude's JSON options
  * inline here, but the actual clickable cards live on the canvas
  * (rendered by the diagram next to the new arrow). This component:
- *   1. Pushes the parsed options into the diagram via OPTIONS_READY_EVENT
- *      once per unique (from, to, options) payload.
+ *   1. Pushes the parsed options into the diagram via the bus
+ *      ("options-ready") once per unique (target, options) payload.
  *   2. Shows a minimal "look at the canvas" prompt where the JSON
  *      would otherwise have been.
  */
@@ -713,6 +709,7 @@ function OptionsHandoff({
   options: ConnectionOption[];
   target: EditTarget;
 }) {
+  const bus = useDiagramBus();
   // Cheap content-based key so we only dispatch when the parsed body
   // actually changes (e.g. streaming finishes; React re-renders on
   // every chunk). Without this we'd flood the diagram with duplicate
@@ -731,12 +728,8 @@ function OptionsHandoff({
   useEffect(() => {
     if (lastSentKeyRef.current === optionsKey) return;
     lastSentKeyRef.current = optionsKey;
-    window.dispatchEvent(
-      new CustomEvent<OptionsReadyDetail>(OPTIONS_READY_EVENT, {
-        detail: { target, options },
-      }),
-    );
-  }, [optionsKey, target, options]);
+    bus.emit("options-ready", { target, options });
+  }, [optionsKey, target, options, bus]);
 
   return (
     <div className="rounded-md border border-[#3B5BD9]/30 bg-[#1A1A20] px-3 py-2 text-xs text-[#7B96E8]">
