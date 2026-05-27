@@ -71,6 +71,15 @@ import {
 } from "@/features/diagram/protocol/prompts";
 import { useDiagramStructureFetch } from "@/features/diagram/hooks/useDiagramStructureFetch";
 import { useAdaptiveFocus } from "@/features/diagram/hooks/useAdaptiveFocus";
+import {
+  useRecentChanges,
+  type PreRegenSnapshot,
+} from "@/features/diagram/hooks/useRecentChanges";
+import { useEditSummary } from "@/features/diagram/hooks/useEditSummary";
+import {
+  useChatSettleEffect,
+  type ChosenOption,
+} from "@/features/diagram/hooks/useChatSettleEffect";
 import { nodeTypes } from "@/features/diagram/components/nodes/BlockNode";
 import { edgeTypes } from "@/features/diagram/components/nodes/LabeledEdge";
 import { DiagramViewSwitcher } from "@/features/diagram/components/DiagramViewSwitcher";
@@ -174,27 +183,9 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
   const [intentGate, setIntentGate] = useState<{
     target: EditTarget;
   } | null>(null);
-  // Captures what the diagram looked like immediately before the most
-  // recent auto-regen so the next "ready" transition can diff and
-  // highlight what Claude added. Reset to null once the diff fires.
-  const preRegenSnapshotRef = useRef<{
-    blockIds: Set<string>;
-    arrowKeys: Set<string>;
-  } | null>(null);
-  // IDs of blocks / arrows that materialized in the latest regen and
-  // should briefly glow. Cleared by a setTimeout ~3.5s after they're
-  // set (matches the recent-change-glow keyframes duration).
-  const [recentChanges, setRecentChanges] = useState<{
-    blockIds: Set<string>;
-    arrowKeys: Set<string>;
-  } | null>(null);
-  // Floating toast on the canvas summarising the most-recent Claude
-  // turn (which files were touched + a 1-line summary). Auto-dismissed
-  // after ~7s by the chatRunning settle effect's setTimeout, or by ✕.
-  const [editSummary, setEditSummary] = useState<{
-    files: string[];
-    text: string;
-  } | null>(null);
+  // Snapshot of the schema captured just before each auto-regen so
+  // useRecentChanges can diff and glow whatever Claude added.
+  const preRegenSnapshotRef = useRef<PreRegenSnapshot | null>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<BlockNodeData>>(
     [],
   );
@@ -219,6 +210,13 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
     chatMessages,
     projectKey,
   });
+
+  // recentChanges (the glow) + editSummary (the toast) lifecycles.
+  const { recentChanges, setRecentChanges } = useRecentChanges({
+    state,
+    preRegenSnapshotRef,
+  });
+  const { editSummary, setEditSummary } = useEditSummary();
 
   // Reset the small in-component state on USER-initiated project
   // change. (FetchState, nodes/edges, focused, regenerating are
@@ -621,7 +619,7 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
    * effect below applies the outcome — label the arrow or drop it.
    */
   const chosenOptionsRef = useRef(
-    new Map<string, { target: EditTarget; option: ConnectionOption }>(), // key = serializeTarget(target)
+    new Map<string, ChosenOption>(), // key = serializeTarget(target)
   );
   useEffect(() => {
     const handler = (e: Event) => {
@@ -1007,350 +1005,19 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
     setEdges(tagRecentEdges(laid.edges));
   }, [selectedId, state, setNodes, setEdges, attachInteractive, tagRecentEdges]);
 
-  // When state lands on "ready" AND we have a pre-regen snapshot,
-  // diff the two schemas. Whatever's new gets marked in recentChanges,
-  // which the layout effect propagates into BlockNodeData.isRecentlyAdded
-  // + edge className. A 3.5s timer clears the highlight (matches the
-  // recent-change-glow keyframes duration).
-  useEffect(() => {
-    if (state.kind !== "ready") return;
-    if (!preRegenSnapshotRef.current) return;
-    const snap = preRegenSnapshotRef.current;
-    preRegenSnapshotRef.current = null;
-    const newBlockIds = new Set<string>();
-    for (const b of state.schema.blocks) {
-      if (b.pending) continue;
-      if (!snap.blockIds.has(b.id)) newBlockIds.add(b.id);
-    }
-    const newArrowKeys = new Set<string>();
-    for (const a of state.schema.arrows) {
-      if (a.pending) continue;
-      const key = `${a.from}->${a.to}`;
-      if (!snap.arrowKeys.has(key)) newArrowKeys.add(key);
-    }
-    console.log("[recent-debug] diff effect fired", {
-      snapBlockIds: Array.from(snap.blockIds),
-      snapArrowKeys: Array.from(snap.arrowKeys),
-      currentBlockIds: state.schema.blocks.filter((b) => !b.pending).map((b) => b.id),
-      currentArrowKeys: state.schema.arrows.filter((a) => !a.pending).map((a) => `${a.from}->${a.to}`),
-      newBlockIds: Array.from(newBlockIds),
-      newArrowKeys: Array.from(newArrowKeys),
-    });
-    if (newBlockIds.size === 0 && newArrowKeys.size === 0) return;
-    setRecentChanges({ blockIds: newBlockIds, arrowKeys: newArrowKeys });
-    // No auto-dismiss. Per user feedback the "just edited" highlight
-    // should persist until they take the NEXT action — that way they
-    // can scan the diagram at leisure and see exactly what Claude
-    // changed. dismissRecentEdit (declared up top) wipes it on any
-    // user mutation handler.
-  }, [state]);
-
-  // Resolve arrows whose chosen option just finished executing AND
-  // auto-regen the diagram if Claude touched any files. chatRunning
-  // true → false transition signals "Claude's current turn ended".
-  //
-  // Branches:
-  //   1. chosenOptionsRef non-empty → round-2 of an arrow flow. Apply
-  //      each option's outcome (block_level keeps + labels the arrow;
-  //      detail/none drops it). Clear the map. We do NOT auto-regen
-  //      after this — the user just set a label and the local state
-  //      is exactly the outcome we want; a fresh server fetch could
-  //      relabel or rename the arrow and surprise them.
-  //   2. chosenOptionsRef empty BUT the just-finished turn used
-  //      edit_project_file / write_project_file → typed-chat edit (or
-  //      a future block / new-block action). Force a structure regen
-  //      so the diagram reflects the new file state.
-  //   3. Otherwise (no edits, no chosen option) → likely round-1 of an
-  //      arrow flow, or a no-op chat reply. Do nothing.
-  const prevChatRunningRef = useRef(false);
-  useEffect(() => {
-    if (prevChatRunningRef.current && !chatRunning) {
-      console.log("[recent-debug] settle entry — schema snapshot", {
-        stateKind: state.kind,
-        arrows:
-          state.kind === "ready"
-            ? state.schema.arrows.map((a) => ({
-                key: `${a.from}->${a.to}`,
-                pending: a.pending ?? null,
-              }))
-            : null,
-        blocks:
-          state.kind === "ready"
-            ? state.schema.blocks.map((b) => ({
-                id: b.id,
-                label: b.label,
-                pending: b.pending ?? null,
-              }))
-            : null,
-      });
-      const chosen = chosenOptionsRef.current;
-      // Only ARROW-kind targets need per-arrow outcome handling here;
-      // block / new-block just want a fresh regen, same as a typed
-      // chat edit. So narrow `chosen` to its arrow entries first.
-      const arrowEntries = Array.from(chosen.values()).filter(
-        (entry) => entry.target.kind === "arrow",
-      );
-      const blockOrNewBlockEntries = Array.from(chosen.values()).filter(
-        (entry) => entry.target.kind !== "arrow",
-      );
-      const hadArrowExecute = arrowEntries.length > 0;
-      const hadBlockOrNewBlockExecute = blockOrNewBlockEntries.length > 0;
-
-      // Collect IDs / arrow keys of EVERYTHING that just settled in
-      // this transition so we can flag them in recentChanges (solid
-      // blue until the user takes their next action).
-      //
-      // CRITICAL: we compute the next blocks / arrows + settled sets
-      // SYNCHRONOUSLY here, before any setState. Side-effect mutations
-      // inside a setState updater callback do not run until the next
-      // render — so the size check at the bottom would silently see
-      // an empty set and skip setRecentChanges, leaving the canvas
-      // grey even though we just settled stuff.
-      const settledBlockIds = new Set<string>();
-      const settledArrowKeys = new Set<string>();
-      let nextBlocks =
-        state.kind === "ready" ? state.schema.blocks : null;
-      let nextArrows =
-        state.kind === "ready" ? state.schema.arrows : null;
-      let schemaChanged = false;
-
-      if (state.kind === "ready") {
-        if (hadArrowExecute) {
-          const arrowOptionByKey = new Map<string, ConnectionOption>();
-          for (const entry of arrowEntries) {
-            if (entry.target.kind !== "arrow") continue;
-            arrowOptionByKey.set(
-              `${entry.target.from}->${entry.target.to}`,
-              entry.option,
-            );
-          }
-          const built: DiagramArrow[] = [];
-          for (const a of state.schema.arrows) {
-            const key = `${a.from}->${a.to}`;
-            const opt = arrowOptionByKey.get(key);
-            if (!opt) {
-              // No chosen-option for this arrow — either long-settled
-              // (no-op) or a Claude-added arrow from ARROWS_ADDED_EVENT
-              // (still pending="claude"). Settle the latter and flag.
-              if (a.pending === "claude") {
-                settledArrowKeys.add(key);
-                built.push({ ...a, pending: undefined });
-              } else {
-                built.push(a);
-              }
-              continue;
-            }
-            if (opt.kind === "block_level") {
-              settledArrowKeys.add(key);
-              built.push({
-                ...a,
-                label: opt.label?.trim() || "uses",
-                pending: undefined,
-              });
-            }
-            // detail / none → drop the arrow (don't push)
-          }
-          nextArrows = built;
-          schemaChanged = true;
-          chosen.clear();
-        } else {
-          // No user-chosen-option this turn, but Claude may still have
-          // added arrows via ARROWS_ADDED_EVENT (pending="claude").
-          // Settle them so the marching-ants stops AND flag them.
-          const hasClaudePending = state.schema.arrows.some(
-            (a) => a.pending === "claude",
-          );
-          if (hasClaudePending) {
-            nextArrows = state.schema.arrows.map((a) => {
-              if (a.pending !== "claude") return a;
-              settledArrowKeys.add(`${a.from}->${a.to}`);
-              return { ...a, pending: undefined };
-            });
-            schemaChanged = true;
-          }
-        }
-
-        // Card-driven flows (block / new-block) — settle locally, NO
-        // regen. The user already knows what they asked for; a full
-        // wipe + re-layout would lose their spatial memory of where
-        // existing blocks sit. For new-block specifically: update the
-        // placeholder so it shows the chosen module title instead of
-        // staying as "New module…".
-        if (hadBlockOrNewBlockExecute) {
-          const newBlockOptions = blockOrNewBlockEntries
-            .filter((e) => e.target.kind === "new-block")
-            .map((e) => e.option);
-          if (newBlockOptions.length > 0) {
-            // Walk placeholder blocks (FIFO) and bind each to one
-            // chosen option in order. If user fired multiple new-block
-            // flows back-to-back this matches them positionally.
-            let optIdx = 0;
-            nextBlocks = state.schema.blocks.map((b) => {
-              if (!b.pending || !b.id.startsWith("__pending_new_")) return b;
-              const opt = newBlockOptions[optIdx];
-              if (!opt) return b;
-              settledBlockIds.add(b.id);
-              optIdx++;
-              return {
-                ...b,
-                label: opt.title.slice(0, 40),
-                caption:
-                  opt.detail.slice(0, 200) || "Just created by Claude.",
-                pending: undefined,
-              };
-            });
-            schemaChanged = true;
-          }
-          chosen.clear();
-        }
-      }
-
-      if (schemaChanged && nextBlocks && nextArrows) {
-        setState({
-          kind: "ready",
-          schema: { blocks: nextBlocks, arrows: nextArrows },
-        });
-      }
-
-      // Auto-regen ONLY for typed-chat turns that edited files. Skip
-      // when the turn was a card-driven (arrow / block / new-block)
-      // execute — those already settled their target locally above
-      // and regen would destroy the rest of the user's spatial layout.
-      let shouldRegen = false;
-      const walkLog: Array<{ idx: number; type: unknown; toolNames: string[]; contentKind: string }> = [];
-      if (!hadArrowExecute && !hadBlockOrNewBlockExecute) {
-        for (let i = chatMessages.length - 1; i >= 0; i--) {
-          const m = chatMessages[i] as {
-            type?: string;
-            message?: { content?: unknown };
-          };
-          const content = m.message?.content;
-          const toolNames: string[] = [];
-          if (Array.isArray(content)) {
-            for (const b of content as Array<{ type?: string; name?: string }>) {
-              if (b?.type === "tool_use" && b.name) toolNames.push(b.name);
-            }
-          }
-          walkLog.push({
-            idx: i,
-            type: m.type,
-            toolNames,
-            contentKind: Array.isArray(content)
-              ? "array"
-              : typeof content,
-          });
-          if (m.type === "user") break;
-          if (m.type !== "assistant") continue;
-          if (!Array.isArray(content)) continue;
-          for (const name of toolNames) {
-            if (name === "edit_project_file" || name === "write_project_file") {
-              shouldRegen = true;
-              break;
-            }
-          }
-          if (shouldRegen) break;
-        }
-      }
-      console.log("[recent-debug] shouldRegen walk", {
-        hadArrowExecute,
-        hadBlockOrNewBlockExecute,
-        shouldRegen,
-        chatMessagesLength: chatMessages.length,
-        walk: walkLog,
-      });
-      if (shouldRegen) {
-        chosen.clear();
-        // Snapshot what's currently on screen so the next "ready"
-        // transition can diff against it and glow whatever Claude
-        // added during this turn.
-        if (state.kind === "ready") {
-          preRegenSnapshotRef.current = {
-            blockIds: new Set(
-              state.schema.blocks
-                .filter((b) => !b.pending)
-                .map((b) => b.id),
-            ),
-            arrowKeys: new Set(
-              state.schema.arrows
-                .filter((a) => !a.pending)
-                .map((a) => `${a.from}->${a.to}`),
-            ),
-          };
-        }
-        setState({ kind: "idle" });
-        setRetryNonce((n) => n + 1);
-      }
-
-      // Build the edit-summary toast from the just-finished assistant
-      // turn. Pulls all edit/write file paths + the last text block
-      // (with JSON fences stripped) so the user gets a quick "here's
-      // what just changed" without having to scroll the chat.
-      const editedFiles = new Set<string>();
-      const textChunks: string[] = [];
-      for (let i = chatMessages.length - 1; i >= 0; i--) {
-        const m = chatMessages[i] as {
-          type?: string;
-          message?: { content?: unknown };
-        };
-        if (m.type === "user") break;
-        if (m.type !== "assistant") continue;
-        const content = m.message?.content;
-        if (!Array.isArray(content)) continue;
-        for (const b of content as Array<{
-          type?: string;
-          name?: string;
-          input?: { path?: string };
-          text?: string;
-        }>) {
-          if (
-            b?.type === "tool_use" &&
-            (b.name === "edit_project_file" ||
-              b.name === "write_project_file") &&
-            typeof b.input?.path === "string"
-          ) {
-            editedFiles.add(b.input.path);
-          } else if (b?.type === "text" && typeof b.text === "string") {
-            textChunks.unshift(b.text);
-          }
-        }
-      }
-      if (editedFiles.size > 0) {
-        const fullText = textChunks.join("\n");
-        const stripped = fullText
-          .replace(/```(?:json)?\s*\n[\s\S]*?\n```/g, "")
-          .trim();
-        const firstParagraph = stripped.split(/\n\n+/)[0] ?? "";
-        setEditSummary({
-          files: Array.from(editedFiles),
-          text:
-            firstParagraph.length > 220
-              ? `${firstParagraph.slice(0, 217)}…`
-              : firstParagraph,
-        });
-      }
-
-      // Flush everything that just settled into recentChanges so the
-      // canvas paints them solid blue until the user's next action.
-      // Skipped when nothing settled (e.g. a no-op chat reply).
-      console.log("[recent-debug] settle effect", {
-        hadArrowExecute,
-        hadBlockOrNewBlockExecute,
-        shouldRegen,
-        settledBlockIds: Array.from(settledBlockIds),
-        settledArrowKeys: Array.from(settledArrowKeys),
-      });
-      if (settledBlockIds.size > 0 || settledArrowKeys.size > 0) {
-        setRecentChanges({
-          blockIds: settledBlockIds,
-          arrowKeys: settledArrowKeys,
-        });
-      }
-    }
-    prevChatRunningRef.current = chatRunning;
-    // chatMessages is read inside; including it as a dep means the
-    // effect runs more often than strictly necessary, but the
-    // transition guard above keeps it idempotent.
-  }, [chatRunning, chatMessages]);
+  // Diff-on-ready glow handled by useRecentChanges above.
+  // Settle effect (arrow outcomes, regen, edit-summary) handled below.
+  useChatSettleEffect({
+    chatRunning,
+    chatMessages,
+    state,
+    setState,
+    chosenOptionsRef,
+    preRegenSnapshotRef,
+    setRetryNonce,
+    setRecentChanges,
+    setEditSummary,
+  });
 
   // Adaptive focus lifecycle handled by useAdaptiveFocus above.
 
