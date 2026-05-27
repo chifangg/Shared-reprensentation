@@ -14,19 +14,15 @@ import {
 import { Bot, User, Upload, Sparkles } from "lucide-react";
 import { useProject, buildChatSystemPrompt } from "@/core/project";
 import {
-  parseTargetMetadata,
-  parseVisualEditMessage,
-  type EditTarget,
-} from "@/core/diagram";
-import { useDiagramBusSubscribe } from "@/features/diagram/protocol/bus";
-import {
-  parseOptionsBlock,
-  stripJsonCodeBlocks,
-} from "@/features/diagram/protocol/parsers";
-import {
   ArrowsAddedSink,
   OptionsHandoff,
-} from "@/features/diagram/protocol/ChatBridge";
+  parseOptionsBlock,
+  parseTargetMetadata,
+  parseVisualEditMessage,
+  stripJsonCodeBlocks,
+  useDiagramBusSubscribe,
+  type EditTarget,
+} from "@/features/diagram";
 
 /**
  * Default customer-facing chat view. Renders turns as bubbles, collapses

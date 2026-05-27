@@ -20,7 +20,7 @@ import {
   DiagramCanvas,
   DiagramViewSwitcher,
   type DiagramView,
-} from "@/core/diagram";
+} from "@/features/diagram";
 
 export function AppShell() {
   const groupRef = useRef<GroupImperativeHandle | null>(null);

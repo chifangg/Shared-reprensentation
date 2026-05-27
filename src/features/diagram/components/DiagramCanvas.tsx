@@ -1,3 +1,17 @@
+/**
+ * The diagram canvas — public entry point of the feature.
+ *
+ * `DiagramCanvas` is a thin wrapper that mounts the ReactFlowProvider
+ * so the inner orchestrator can call `useReactFlow()` (via the
+ * useCanvasFit / useViewportFocusFit hooks). All the actual state +
+ * effects + interactions live inside `DiagramCanvasInner` below.
+ *
+ * The inner component is still ~700 lines — most of that is the
+ * handler callbacks (handleAddConnection, handleAddNewBlock, …) and
+ * the JSX layout shell. Hooks own the heavy state machinery (fetch
+ * lifecycles, settle effect, recent-changes diff, canvas fit).
+ */
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ReactFlow,
@@ -13,15 +27,8 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useProject } from "@/core/project";
-
-// Types + DIAGRAM_VIEW_LABELS + serializeTarget moved to
-// @/features/diagram/types.ts. Re-export here so ChatView + AppShell
-// keep their existing import paths during the refactor; the final
-// migration commit deletes this file and flips them directly.
 import {
-  DIAGRAM_VIEW_LABELS,
   serializeTarget,
-  type ArrowsAddedDetail,
   type BlockNodeData,
   type ConnectionOption,
   type DiagramArrow,
@@ -29,94 +36,42 @@ import {
   type DiagramSchema,
   type DiagramView,
   type EditTarget,
-  type FetchState,
-  type MiniNodeData,
-  type OptionExecutedDetail,
-  type OptionsReadyDetail,
-  type VisualEditDetail,
-} from "@/features/diagram";
-
-export {
-  DIAGRAM_VIEW_LABELS,
-  serializeTarget,
-  type ArrowsAddedDetail,
-  type BlockNodeData,
-  type ConnectionOption,
-  type DiagramArrow,
-  type DiagramBlock,
-  type DiagramSchema,
-  type DiagramView,
-  type EditTarget,
-  type FetchState,
-  type MiniNodeData,
-  type OptionExecutedDetail,
-  type OptionsReadyDetail,
-  type VisualEditDetail,
-};
-
-// Pure helpers extracted to feature subfolders. Re-export the two
-// chat-facing parsers so ChatView keeps its existing import path.
-import { layoutSchema } from "@/features/diagram/layout/layoutSchema";
-import {
-  parseTargetMetadata,
-  parseVisualEditMessage,
-} from "@/features/diagram/protocol/sentinels";
+} from "../types";
+import { layoutSchema } from "../layout/layoutSchema";
 import {
   composeExecuteDirectPrompt,
   composeExecuteOptionPrompt,
   composeRenamePrompt,
   composeSuggestionsRound1Prompt,
-} from "@/features/diagram/protocol/prompts";
-import { useDiagramStructureFetch } from "@/features/diagram/hooks/useDiagramStructureFetch";
-import { useAdaptiveFocus } from "@/features/diagram/hooks/useAdaptiveFocus";
+} from "../protocol/prompts";
+import { useDiagramStructureFetch } from "../hooks/useDiagramStructureFetch";
+import { useAdaptiveFocus } from "../hooks/useAdaptiveFocus";
 import {
   useRecentChanges,
   type PreRegenSnapshot,
-} from "@/features/diagram/hooks/useRecentChanges";
-import { useEditSummary } from "@/features/diagram/hooks/useEditSummary";
+} from "../hooks/useRecentChanges";
+import { useEditSummary } from "../hooks/useEditSummary";
 import {
   useChatSettleEffect,
   type ChosenOption,
-} from "@/features/diagram/hooks/useChatSettleEffect";
-import { useCanvasFit } from "@/features/diagram/hooks/useCanvasFit";
-import { useViewportFocusFit } from "@/features/diagram/hooks/useViewportFocusFit";
+} from "../hooks/useChatSettleEffect";
+import { useCanvasFit } from "../hooks/useCanvasFit";
+import { useViewportFocusFit } from "../hooks/useViewportFocusFit";
 import {
   useDiagramBus,
   useDiagramBusSubscribe,
-} from "@/features/diagram/protocol/bus";
-import { dlog, dwarn } from "@/features/diagram/util/debug";
-import { nodeTypes } from "@/features/diagram/components/nodes/BlockNode";
-import { edgeTypes } from "@/features/diagram/components/nodes/LabeledEdge";
-import { DiagramViewSwitcher } from "@/features/diagram/components/DiagramViewSwitcher";
-import { ConnectionOptionsOverlay } from "@/features/diagram/components/overlays/ConnectionOptionsOverlay";
-import { IntentGate } from "@/features/diagram/components/overlays/IntentGate";
-import { DiagramFetchOverlay } from "@/features/diagram/components/overlays/DiagramFetchOverlay";
-import { EditSummaryToast } from "@/features/diagram/components/overlays/EditSummaryToast";
-import { RegeneratingChip } from "@/features/diagram/components/overlays/RegeneratingChip";
-import { AdaptiveFocusBanner } from "@/features/diagram/components/overlays/AdaptiveFocusBanner";
-import { AddNewBlockButton } from "@/features/diagram/components/overlays/AddNewBlockButton";
-import { DiagramFocusPanel } from "@/features/diagram/components/panel/DiagramFocusPanel";
-
-export { parseTargetMetadata, parseVisualEditMessage, DiagramViewSwitcher };
-
-// Sentinels (VISUAL_EDIT_ARROW_*, VISUAL_EDIT_BLOCK_*, VISUAL_EDIT_NEW_BLOCK,
-// VISUAL_EDIT_SENTINEL_*), buildTargetSentinel, parseTargetMetadata,
-// parseVisualEditMessage moved to @/features/diagram/protocol/sentinels.
-// buildArrowJsonSuffix + buildFileTreeBlock moved to
-// @/features/diagram/protocol/prompts. Imported above.
-//
-// The four window-event string constants (VISUAL_EDIT_EVENT etc.) plus
-// their *Detail interfaces have been replaced by the typed
-// DiagramBusMessageMap in @/features/diagram/protocol/events. Both
-// sides now emit/subscribe through the bus from
-// @/features/diagram/protocol/bus.
-
-// BlockNode + nodeTypes moved to @/features/diagram/components/nodes/BlockNode.
-// LabeledEdge + edgeTypes moved to @/features/diagram/components/nodes/LabeledEdge.
-// Both imported above.
-
-// estimateExpandedHeight, layoutSchema moved to
-// @/features/diagram/layout/layoutSchema (imported above).
+} from "../protocol/bus";
+import { dlog, dwarn } from "../util/debug";
+import { nodeTypes } from "./nodes/BlockNode";
+import { edgeTypes } from "./nodes/LabeledEdge";
+import { ConnectionOptionsOverlay } from "./overlays/ConnectionOptionsOverlay";
+import { IntentGate } from "./overlays/IntentGate";
+import { DiagramFetchOverlay } from "./overlays/DiagramFetchOverlay";
+import { EditSummaryToast } from "./overlays/EditSummaryToast";
+import { RegeneratingChip } from "./overlays/RegeneratingChip";
+import { AdaptiveFocusBanner } from "./overlays/AdaptiveFocusBanner";
+import { AddNewBlockButton } from "./overlays/AddNewBlockButton";
+import { DiagramFocusPanel } from "./panel/DiagramFocusPanel";
 
 export function DiagramCanvas({ view }: { view: DiagramView }) {
   return (
@@ -125,8 +80,6 @@ export function DiagramCanvas({ view }: { view: DiagramView }) {
     </ReactFlowProvider>
   );
 }
-
-// buildChatContext moved to @/features/diagram/api/buildChatContext (imported above).
 
 function DiagramCanvasInner({ view }: { view: DiagramView }) {
   const { files, chatMessages, chatRunning, projectKey } = useProject();
