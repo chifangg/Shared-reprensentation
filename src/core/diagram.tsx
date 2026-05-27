@@ -30,7 +30,7 @@ import {
   Plus,
   X,
 } from "lucide-react";
-import { buildProjectContext, useProject } from "@/core/project";
+import { useProject } from "@/core/project";
 
 // Types + DIAGRAM_VIEW_LABELS + serializeTarget moved to
 // @/features/diagram/types.ts. Re-export here so ChatView + AppShell
@@ -72,8 +72,33 @@ export {
   type VisualEditDetail,
 };
 
-const NODE_W = 220;
-const NODE_H = 90;
+// Pure helpers extracted to feature subfolders. Re-export the two
+// chat-facing parsers so ChatView keeps its existing import path.
+import {
+  NODE_H,
+  NODE_W,
+  PANEL_MAX,
+  PANEL_MIN,
+} from "@/features/diagram/layout/constants";
+import {
+  estimateMiniExpandedHeight,
+  layoutSchema,
+} from "@/features/diagram/layout/layoutSchema";
+import {
+  VISUAL_EDIT_SENTINEL_PREFIX,
+  VISUAL_EDIT_SENTINEL_SUFFIX,
+  buildTargetSentinel,
+  parseTargetMetadata,
+  parseVisualEditMessage,
+} from "@/features/diagram/protocol/sentinels";
+import {
+  buildArrowJsonSuffix,
+  buildFileTreeBlock,
+} from "@/features/diagram/protocol/prompts";
+import { buildProjectContext } from "@/features/diagram/api/buildProjectContext";
+import { buildChatContext } from "@/features/diagram/api/buildChatContext";
+
+export { parseTargetMetadata, parseVisualEditMessage };
 
 /**
  * Custom DOM event the diagram uses to push prompts into the chat
@@ -113,171 +138,11 @@ export const OPTION_EXECUTED_EVENT = "app:diagram-option-executed";
  */
 export const ARROWS_ADDED_EVENT = "app:diagram-arrows-added";
 
-/**
- * Metadata sentinels embedded after the visual-edit summary, one line
- * each. The chat-side parser extracts whichever is present so cards
- * know what kind of target the assistant's option list is about.
- */
-export const VISUAL_EDIT_ARROW_PREFIX = "<<arrow from=\"";
-export const VISUAL_EDIT_ARROW_MID = "\" to=\"";
-export const VISUAL_EDIT_ARROW_SUFFIX = "\">>";
-
-export const VISUAL_EDIT_BLOCK_PREFIX = "<<block id=\"";
-export const VISUAL_EDIT_BLOCK_SUFFIX = "\">>";
-
-export const VISUAL_EDIT_NEW_BLOCK = "<<new-block>>";
-
-export function buildTargetSentinel(t: EditTarget): string {
-  switch (t.kind) {
-    case "arrow":
-      return `${VISUAL_EDIT_ARROW_PREFIX}${t.from}${VISUAL_EDIT_ARROW_MID}${t.to}${VISUAL_EDIT_ARROW_SUFFIX}`;
-    case "block":
-      return `${VISUAL_EDIT_BLOCK_PREFIX}${t.id}${VISUAL_EDIT_BLOCK_SUFFIX}`;
-    case "new-block":
-      return VISUAL_EDIT_NEW_BLOCK;
-  }
-}
-
-/**
- * Trailing instruction appended to round-2 execute prompts. Asks
- * Claude to emit ONE more fenced JSON code block AFTER its text
- * summary, listing arrows that should now be drawn between blocks
- * (because the code change actually introduced a dependency). Diagram
- * side parses + draws those arrows with a glow animation so the user
- * sees how the new module hooks into the rest of the system without
- * a full regen.
- *
- * `newBlockLabel` is the label of any just-created block (the option
- * title); empty for non-new-block flows.
- */
-export function buildArrowJsonSuffix(
-  newBlockLabel: string,
-  existingBlockLabels: string[] = [],
-): string[] {
-  const labelsLine =
-    existingBlockLabels.length > 0
-      ? `Existing block labels (use these EXACTLY, including capitalization): ${existingBlockLabels.map((l) => `"${l}"`).join(", ")}.`
-      : "";
-  return [
-    "",
-    `MANDATORY: end your response with a fenced JSON code block listing arrows that should now appear on the diagram. This is how the canvas learns about new dependencies your edit just created. Format:`,
-    "",
-    "```json",
-    `{`,
-    `  "added_arrows": [`,
-    `    { "from": "<source block label>", "to": "<target block label>", "label": "<short verb>" }`,
-    `  ]`,
-    `}`,
-    "```",
-    "",
-    `Example — if you added \`import { foo } from '../canvas/server'\` in App.tsx:`,
-    "```json",
-    `{ "added_arrows": [ { "from": "Frontend App", "to": "Canvas Server", "label": "imports" } ] }`,
-    "```",
-    "",
-    labelsLine,
-    newBlockLabel
-      ? `Plus your new block appears on the diagram with the label "${newBlockLabel}" — use that exact string in "from" or "to".`
-      : "",
-    "",
-    `If your edit truly created no new block-to-block dependency, still emit the block with an empty list: \`{ "added_arrows": [] }\`. Never skip the block.`,
-  ].filter((l) => l !== "" || true); // keep blank lines for readability
-}
-
-/**
- * Compact file-tree block injected into round-2 execute prompts so
- * Claude doesn't invent plausible-but-wrong paths (e.g. "src/types/..."
- * when the project root is "mcp_excalidraw/"). The system prompt
- * already lists every path, but by round-2 enough tokens have flowed
- * past that the model often forgets and guesses — the inline
- * reminder right next to the read/edit instruction fixes that.
- *
- * Capped at ~80 paths to keep prompt size sane; for larger uploads we
- * surface the count + the first 80 sorted paths. Even huge repos
- * usually have their top-level shape captured in the first dozen.
- */
-function buildFileTreeBlock(paths: string[]): string[] {
-  const MAX = 80;
-  const sorted = [...paths].sort();
-  const shown = sorted.slice(0, MAX);
-  const lines = [
-    "",
-    `<project_files count="${paths.length}">`,
-    ...shown,
-    paths.length > MAX
-      ? `... (${paths.length - MAX} more files — read_project_file with one of the listed paths)`
-      : "",
-    "</project_files>",
-    `Every \`read_project_file\` / \`edit_project_file\` / \`write_project_file\` path MUST be one of the entries above, character-for-character. Do NOT invent paths like "src/..." if no such prefix appears in the tree — the project root may be nested (e.g. "mcp_excalidraw/src/...").`,
-  ];
-  return lines.filter((l) => l !== "");
-}
-
-export function parseTargetMetadata(text: string): EditTarget | null {
-  for (const line of text.split("\n").slice(0, 5)) {
-    if (line.startsWith(VISUAL_EDIT_ARROW_PREFIX)) {
-      const after = line.slice(VISUAL_EDIT_ARROW_PREFIX.length);
-      const mid = after.indexOf(VISUAL_EDIT_ARROW_MID);
-      if (mid === -1) continue;
-      const from = after.slice(0, mid);
-      const rest = after.slice(mid + VISUAL_EDIT_ARROW_MID.length);
-      if (!rest.endsWith(VISUAL_EDIT_ARROW_SUFFIX)) continue;
-      const to = rest.slice(0, rest.length - VISUAL_EDIT_ARROW_SUFFIX.length);
-      return { kind: "arrow", from, to };
-    }
-    if (line.startsWith(VISUAL_EDIT_BLOCK_PREFIX)) {
-      const after = line.slice(VISUAL_EDIT_BLOCK_PREFIX.length);
-      if (!after.endsWith(VISUAL_EDIT_BLOCK_SUFFIX)) continue;
-      const id = after.slice(0, after.length - VISUAL_EDIT_BLOCK_SUFFIX.length);
-      return { kind: "block", id };
-    }
-    if (line === VISUAL_EDIT_NEW_BLOCK) {
-      return { kind: "new-block" };
-    }
-  }
-  return null;
-}
-
-/**
- * Marker on the FIRST line of a visual-edit prompt. The chat renderer
- * detects this prefix, extracts the human-readable summary, and shows
- * a compact bubble instead of dumping the full structured prompt body
- * (which is for Claude's eyes, not the user's). Claude itself ignores
- * the marker line — it just reads the rest of the prompt as context.
- */
-export const VISUAL_EDIT_SENTINEL_PREFIX = "<<diagram-edit summary=\"";
-export const VISUAL_EDIT_SENTINEL_SUFFIX = "\">>";
-
-/**
- * Parse a user message; if it begins with the visual-edit sentinel,
- * return the summary and the body (everything after the sentinel line)
- * separately so the chat can render them as a compact + expandable
- * pair. Returns null for ordinary typed user messages.
- */
-export function parseVisualEditMessage(
-  text: string,
-): { summary: string; body: string } | null {
-  if (!text.startsWith(VISUAL_EDIT_SENTINEL_PREFIX)) return null;
-  const nl = text.indexOf("\n");
-  const firstLine = nl === -1 ? text : text.slice(0, nl);
-  if (!firstLine.endsWith(VISUAL_EDIT_SENTINEL_SUFFIX)) return null;
-  const summary = firstLine.slice(
-    VISUAL_EDIT_SENTINEL_PREFIX.length,
-    firstLine.length - VISUAL_EDIT_SENTINEL_SUFFIX.length,
-  );
-  let body = nl === -1 ? "" : text.slice(nl + 1).replace(/^\n+/, "");
-  // Strip the optional arrow-metadata sentinel from the body so it
-  // doesn't show up in the chat "see prompt" preview as gibberish —
-  // it's meant for machine consumption only.
-  if (body.startsWith(VISUAL_EDIT_ARROW_PREFIX)) {
-    const nl2 = body.indexOf("\n");
-    if (nl2 !== -1) body = body.slice(nl2 + 1).replace(/^\n+/, "");
-    else body = "";
-  }
-  return { summary, body };
-}
-
-// VisualEditDetail and BlockNodeData moved to @/features/diagram/types.ts.
+// Sentinels (VISUAL_EDIT_ARROW_*, VISUAL_EDIT_BLOCK_*, VISUAL_EDIT_NEW_BLOCK,
+// VISUAL_EDIT_SENTINEL_*), buildTargetSentinel, parseTargetMetadata,
+// parseVisualEditMessage moved to @/features/diagram/protocol/sentinels.
+// buildArrowJsonSuffix + buildFileTreeBlock moved to
+// @/features/diagram/protocol/prompts. Imported above.
 
 function BlockNode({ data, selected }: NodeProps<Node<BlockNodeData>>) {
   const fileCount = data.files.length;
@@ -519,183 +384,8 @@ function LabeledEdge({
 
 const edgeTypes = { labeled: LabeledEdge };
 
-function estimateExpandedHeight(b: DiagramBlock): number {
-  // Selected blocks now show the full caption (no line-clamp) but no
-  // longer pop out full file / function lists — they were too small to
-  // read and crowded the node. Height just accommodates the unclamped
-  // caption.
-  const captionLines = Math.max(1, Math.ceil((b.caption?.length ?? 0) / 32));
-  const captionExtra = Math.max(0, captionLines - 2) * 14;
-  return NODE_H + captionExtra;
-}
-
-function layoutSchema(
-  schema: DiagramSchema,
-  selectedId: string | null = null,
-  focusedIds?: string[] | null,
-): {
-  nodes: Node<BlockNodeData>[];
-  edges: Edge[];
-} {
-  const focusedSet = new Set(focusedIds ?? []);
-  const hasFocus = focusedSet.size > 0;
-  const allBlockIds = new Set(schema.blocks.map((b) => b.id));
-  const containerIds = new Set<string>();
-  for (const b of schema.blocks) {
-    if (b.parent && allBlockIds.has(b.parent)) containerIds.add(b.parent);
-  }
-
-  const g = new dagre.graphlib.Graph();
-  g.setGraph({
-    rankdir: "TB",
-    // Bumped from 50 / 70 → 80 / 110 so edge labels sitting at the
-    // path midpoint have visible whitespace around them instead of
-    // crashing into adjacent blocks. Combined with zIndex:20 on the
-    // label div (in LabeledEdge), this keeps "imports / fetches"
-    // pills readable even when blocks are dense.
-    nodesep: 80,
-    ranksep: 110,
-    marginx: 20,
-    marginy: 20,
-  });
-  g.setDefaultEdgeLabel(() => ({}));
-
-  for (const b of schema.blocks) {
-    const h = b.id === selectedId ? estimateExpandedHeight(b) : NODE_H;
-    g.setNode(b.id, { width: NODE_W, height: h });
-  }
-  for (const b of schema.blocks) {
-    if (b.parent && allBlockIds.has(b.parent)) {
-      g.setEdge(b.parent, b.id);
-    }
-  }
-  for (const a of schema.arrows) {
-    // Skip pending arrows from layout — adding an in-flight edge to
-    // dagre can shuffle nodes around the moment the user pulls a new
-    // arrow, which is jarring when the popover is supposed to land on
-    // a stable midpoint. Pending arrows still render (see edges loop
-    // below); they just don't influence the dagre rank/position pass.
-    if (a.pending !== undefined) continue;
-    if (allBlockIds.has(a.from) && allBlockIds.has(a.to)) {
-      g.setEdge(a.from, a.to);
-    }
-  }
-
-  dagre.layout(g);
-
-  const nodes: Node<BlockNodeData>[] = schema.blocks.map((b) => {
-    const pos = g.node(b.id);
-    const h = b.id === selectedId ? estimateExpandedHeight(b) : NODE_H;
-    return {
-      id: b.id,
-      type: "block",
-      position: { x: pos.x - NODE_W / 2, y: pos.y - h / 2 },
-      selected: b.id === selectedId,
-      data: {
-        label: b.label,
-        caption: b.caption,
-        files: b.provenance?.files ?? [],
-        functions: b.provenance?.functions ?? [],
-        isContainer: containerIds.has(b.id),
-        isFocused: focusedSet.has(b.id),
-        isDimmed: hasFocus && !focusedSet.has(b.id),
-        isPending: b.pending === true,
-        isRecentlyAdded: false, // injected by attachInteractive
-      },
-    };
-  });
-
-  const edges: Edge[] = [];
-
-  // Note: parent → child structural edges used to be drawn here as
-  // faint grey lines. Claude was emitting `parent` for blocks that
-  // visually looked like clutter (e.g. linking unrelated services
-  // through a meaningless containment), so we stopped rendering
-  // them. The `parent` relationships still feed dagre above for
-  // layout ranking — we just no longer paint the line on screen.
-
-  // Cluster arrows whose approximate midpoints land near each other
-  // (e.g. multiple arrows fanning into the same target node), then
-  // merge their labels into a single combined label so we don't render
-  // overlapping pills like "POSTs" stacked under "spawns". Secondary
-  // arrows in a cluster keep their line but render with no label.
-  const nodePos = new Map(nodes.map((n) => [n.id, n.position]));
-  const PROX = 100;
-  type ArrowInfo = {
-    arrow: DiagramArrow;
-    midX: number;
-    midY: number;
-  };
-  const arrowInfos: ArrowInfo[] = [];
-  for (const a of schema.arrows) {
-    if (!allBlockIds.has(a.from) || !allBlockIds.has(a.to)) continue;
-    const from = nodePos.get(a.from);
-    const to = nodePos.get(a.to);
-    if (!from || !to) continue;
-    arrowInfos.push({
-      arrow: a,
-      midX: (from.x + to.x) / 2 + NODE_W / 2,
-      midY: (from.y + to.y) / 2 + NODE_H / 2,
-    });
-  }
-  const clusters: ArrowInfo[][] = [];
-  for (const info of arrowInfos) {
-    const found = clusters.find(
-      (c) =>
-        Math.abs(c[0].midX - info.midX) < PROX &&
-        Math.abs(c[0].midY - info.midY) < PROX,
-    );
-    if (found) found.push(info);
-    else clusters.push([info]);
-  }
-  const labelOverride = new Map<DiagramArrow, string>();
-  for (const cluster of clusters) {
-    if (cluster.length <= 1) continue;
-    const merged = cluster
-      .map((c) => c.arrow.label)
-      .filter((l) => l && l.trim() !== "")
-      .join(" / ");
-    labelOverride.set(cluster[0].arrow, merged);
-    for (let i = 1; i < cluster.length; i++) {
-      labelOverride.set(cluster[i].arrow, "");
-    }
-  }
-
-  for (const a of schema.arrows) {
-    if (!allBlockIds.has(a.from) || !allBlockIds.has(a.to)) continue;
-    const finalLabel = labelOverride.has(a)
-      ? labelOverride.get(a)!
-      : a.label;
-    const dim = hasFocus && !(focusedSet.has(a.from) || focusedSet.has(a.to));
-    const isPending = a.pending !== undefined;
-    edges.push({
-      id: `sem-${a.from}-${a.to}-${a.label}`,
-      source: a.from,
-      target: a.to,
-      sourceHandle: "b",
-      targetHandle: "t",
-      type: "labeled",
-      label: finalLabel || undefined,
-      // Marching-ants while pending (any stage); settled arrows skip
-      // the class so they render as a normal solid line.
-      className: isPending ? "pending-edge" : undefined,
-      style: isPending
-        ? {
-            stroke: "#3B5BD9",
-            strokeWidth: 2,
-            strokeDasharray: "8 6",
-            opacity: 1,
-          }
-        : {
-            stroke: "#666666",
-            strokeWidth: 1.5,
-            opacity: dim ? 0.2 : 1,
-          },
-    });
-  }
-
-  return { nodes, edges };
-}
+// estimateExpandedHeight, layoutSchema moved to
+// @/features/diagram/layout/layoutSchema (imported above).
 
 export function DiagramCanvas({ view }: { view: DiagramView }) {
   return (
@@ -705,32 +395,7 @@ export function DiagramCanvas({ view }: { view: DiagramView }) {
   );
 }
 
-function buildChatContext(
-  msgs: import("@/core/hooks/useClaudeSession").ClaudeMessage[],
-  maxTurns = 3,
-): string {
-  type Turn = { role: "user" | "assistant"; text: string };
-  const turns: Turn[] = [];
-  for (const m of msgs) {
-    const t = (m as { type?: string }).type;
-    const inner = (m as { message?: { content?: unknown } }).message?.content;
-    if (t === "user") {
-      if (typeof inner === "string") {
-        turns.push({ role: "user", text: inner });
-      }
-    } else if (t === "assistant" && Array.isArray(inner)) {
-      const text = (inner as { type?: string; text?: string }[])
-        .filter((b) => b?.type === "text" && typeof b?.text === "string")
-        .map((b) => b.text)
-        .join(" ");
-      if (text.trim()) turns.push({ role: "assistant", text });
-    }
-  }
-  const recent = turns.slice(-maxTurns * 2);
-  return recent
-    .map((t) => `${t.role.toUpperCase()}: ${t.text}`)
-    .join("\n\n");
-}
+// buildChatContext moved to @/features/diagram/api/buildChatContext (imported above).
 
 function DiagramCanvasInner({ view }: { view: DiagramView }) {
   const { files, chatMessages, chatRunning, projectKey } = useProject();
@@ -2449,8 +2114,7 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
   );
 }
 
-const PANEL_MIN = 280;
-const PANEL_MAX = 720;
+// PANEL_MIN / PANEL_MAX moved to @/features/diagram/layout/constants (imported above).
 
 function DiagramFocusPanel({
   baseBlocks,
@@ -2706,19 +2370,7 @@ function MiniBlockNode({ data }: NodeProps<Node<MiniNodeData>>) {
   );
 }
 
-// Approximate the expanded height of a selected detail block in the
-// mini graph, so dagre can carve out enough vertical room and avoid
-// overlapping neighbors when the user clicks to inspect.
-function estimateMiniExpandedHeight(b: DiagramBlock): number {
-  let h = 44;
-  const captionLines = Math.max(1, Math.ceil((b.caption?.length ?? 0) / 28));
-  h += captionLines * 12;
-  const fileCount = b.provenance?.files?.length ?? 0;
-  if (fileCount > 0) h += 18 + fileCount * 14;
-  const fnCount = b.provenance?.functions?.length ?? 0;
-  if (fnCount > 0) h += 18 + Math.ceil(fnCount / 3) * 18;
-  return Math.max(h + 12, 56);
-}
+// estimateMiniExpandedHeight moved to @/features/diagram/layout/layoutSchema (imported above).
 
 const miniNodeTypes = { mini: MiniBlockNode };
 
