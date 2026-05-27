@@ -6,6 +6,7 @@ import {
   type SetStateAction,
 } from "react";
 import type { FetchState } from "../types";
+import { dlog } from "../util/debug";
 
 export type RecentChanges = {
   blockIds: Set<string>;
@@ -64,7 +65,7 @@ export function useRecentChanges({
       const key = `${a.from}->${a.to}`;
       if (!snap.arrowKeys.has(key)) newArrowKeys.add(key);
     }
-    console.log("[recent-debug] diff effect fired", {
+    dlog("recent-debug:diff effect fired", {
       snapBlockIds: Array.from(snap.blockIds),
       snapArrowKeys: Array.from(snap.arrowKeys),
       currentBlockIds: state.schema.blocks

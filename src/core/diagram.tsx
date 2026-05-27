@@ -80,6 +80,7 @@ import {
 } from "@/features/diagram/hooks/useChatSettleEffect";
 import { useCanvasFit } from "@/features/diagram/hooks/useCanvasFit";
 import { useViewportFocusFit } from "@/features/diagram/hooks/useViewportFocusFit";
+import { dlog, dwarn } from "@/features/diagram/util/debug";
 import { nodeTypes } from "@/features/diagram/components/nodes/BlockNode";
 import { edgeTypes } from "@/features/diagram/components/nodes/LabeledEdge";
 import { DiagramViewSwitcher } from "@/features/diagram/components/DiagramViewSwitcher";
@@ -528,7 +529,7 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent<ArrowsAddedDetail>).detail;
       if (!detail || detail.arrows.length === 0) return;
-      console.log("[recent-debug] ARROWS_ADDED handler", {
+      dlog("recent-debug:ARROWS_ADDED handler", {
         detailArrows: detail.arrows,
       });
       setState((prev) => {
@@ -549,8 +550,9 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
             // Surface mismatches in dev — silently dropping arrows
             // makes it impossible to tell whether Claude forgot to
             // emit them vs. emitted wrong labels.
-            console.warn(
-              `[diagram] added_arrows label "${label}" did not match any block. Existing labels:`,
+            dwarn(
+              "diagram",
+              `added_arrows label "${label}" did not match any block. Existing labels:`,
               prev.schema.blocks.map((b) => b.label),
             );
           }
@@ -574,7 +576,7 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
           });
         }
         if (toAdd.length === 0) return prev;
-        console.log("[recent-debug] ARROWS_ADDED applied", {
+        dlog("recent-debug:ARROWS_ADDED applied", {
           toAdd: toAdd.map((a) => `${a.from}->${a.to}(${a.label})`),
         });
         return {
@@ -725,7 +727,7 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
           onActions: () => handleBlockAction(n.id),
         },
       }));
-      console.log("[recent-debug] attachInteractive ran", {
+      dlog("recent-debug:attachInteractive ran", {
         recentChangesBlockIds: recentChanges
           ? Array.from(recentChanges.blockIds)
           : null,
@@ -746,7 +748,7 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
   const tagRecentEdges = useCallback(
     (laidEdges: Edge[]) => {
       if (!recentChanges || recentChanges.arrowKeys.size === 0) {
-        console.log("[recent-debug] tagRecentEdges (no recent arrows)", {
+        dlog("recent-debug:tagRecentEdges (no recent arrows)", {
           recentChanges: recentChanges ? "non-null but empty" : "null",
         });
         return laidEdges;
@@ -775,7 +777,7 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
           data: { ...(e.data ?? {}), recent: true },
         };
       });
-      console.log("[recent-debug] tagRecentEdges ran", {
+      dlog("recent-debug:tagRecentEdges ran", {
         recentChangesArrowKeys: Array.from(recentChanges.arrowKeys),
         laidEdges: laidEdges.map((e) => ({
           id: e.id,
@@ -829,7 +831,7 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
       arrows: [...state.schema.arrows, ...promoted.arrows],
     };
     const laid = layoutSchema(merged, selectedId, focusedIds);
-    console.log("[recent-debug] base-canvas layout effect", {
+    dlog("recent-debug:base-canvas layout effect", {
       schemaArrowKeys: state.schema.arrows.map(
         (a) => `${a.from}->${a.to}(pending=${a.pending ?? "none"})`,
       ),

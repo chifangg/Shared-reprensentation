@@ -12,6 +12,7 @@
  */
 
 import type { DiagramArrow, DiagramBlock } from "../types";
+import { dlog } from "../util/debug";
 
 export type FocusStreamEvent =
   | { kind: "focus"; ids: string[] }
@@ -89,7 +90,7 @@ export async function fetchFocusStream({
       if (!line) continue;
       const evt = parseFocusLine(line);
       if (!evt) continue;
-      console.log("[diagram/focus]", evt);
+      dlog("diagram/focus", evt);
       onEvent(evt);
     }
   }

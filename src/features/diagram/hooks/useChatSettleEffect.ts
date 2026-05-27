@@ -12,6 +12,7 @@ import type {
   EditTarget,
   FetchState,
 } from "../types";
+import { dlog } from "../util/debug";
 import type { EditSummary } from "./useEditSummary";
 import type { PreRegenSnapshot, RecentChanges } from "./useRecentChanges";
 
@@ -88,7 +89,7 @@ export function useChatSettleEffect({
   const prevChatRunningRef = useRef(false);
   useEffect(() => {
     if (prevChatRunningRef.current && !chatRunning) {
-      console.log("[recent-debug] settle entry — schema snapshot", {
+      dlog("recent-debug:settle entry — schema snapshot", {
         stateKind: state.kind,
         arrows:
           state.kind === "ready"
@@ -283,7 +284,7 @@ export function useChatSettleEffect({
           if (shouldRegen) break;
         }
       }
-      console.log("[recent-debug] shouldRegen walk", {
+      dlog("recent-debug:shouldRegen walk", {
         hadArrowExecute,
         hadBlockOrNewBlockExecute,
         shouldRegen,
@@ -364,7 +365,7 @@ export function useChatSettleEffect({
       // Flush everything that just settled into recentChanges so the
       // canvas paints them solid blue until the user's next action.
       // Skipped when nothing settled (e.g. a no-op chat reply).
-      console.log("[recent-debug] settle effect", {
+      dlog("recent-debug:settle effect", {
         hadArrowExecute,
         hadBlockOrNewBlockExecute,
         shouldRegen,

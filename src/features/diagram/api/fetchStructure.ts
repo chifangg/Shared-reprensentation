@@ -13,6 +13,7 @@
  */
 
 import type { DiagramArrow, DiagramBlock } from "../types";
+import { dlog } from "../util/debug";
 
 export type StructureStreamEvent =
   | { kind: "block"; data: DiagramBlock }
@@ -80,7 +81,7 @@ export async function fetchStructureStream({
       if (!line) continue;
       const evt = parseStructureLine(line);
       if (!evt) continue;
-      console.log("[diagram/structure]", evt);
+      dlog("diagram/structure", evt);
       onEvent(evt);
     }
   }
