@@ -16,13 +16,17 @@ import { useProject, buildChatSystemPrompt } from "@/core/project";
 import {
   parseTargetMetadata,
   parseVisualEditMessage,
-  type ConnectionOption,
   type EditTarget,
 } from "@/core/diagram";
+import { useDiagramBusSubscribe } from "@/features/diagram/protocol/bus";
 import {
-  useDiagramBus,
-  useDiagramBusSubscribe,
-} from "@/features/diagram/protocol/bus";
+  parseOptionsBlock,
+  stripJsonCodeBlocks,
+} from "@/features/diagram/protocol/parsers";
+import {
+  ArrowsAddedSink,
+  OptionsHandoff,
+} from "@/features/diagram/protocol/ChatBridge";
 
 /**
  * Default customer-facing chat view. Renders turns as bubbles, collapses
@@ -579,163 +583,10 @@ function ReadyPrompt() {
  * if the body doesn't fit the schema (parse error, missing fields,
  * unknown kind). Lenient on surrounding prose, strict on shape.
  */
-function parseOptionsBlock(
-  text: string,
-): { options: ConnectionOption[] } | null {
-  for (const body of allJsonBlocks(text)) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(body);
-    } catch {
-      continue;
-    }
-    if (!parsed || typeof parsed !== "object") continue;
-    const rawOpts = (parsed as { options?: unknown }).options;
-    if (!Array.isArray(rawOpts)) continue;
-    const options: ConnectionOption[] = [];
-    for (const o of rawOpts) {
-      if (!o || typeof o !== "object") continue;
-      const obj = o as Record<string, unknown>;
-      if (typeof obj.title !== "string") continue;
-      if (typeof obj.detail !== "string") continue;
-      if (
-        obj.kind !== "block_level" &&
-        obj.kind !== "detail" &&
-        obj.kind !== "none"
-      )
-        continue;
-      options.push({
-        title: obj.title,
-        detail: obj.detail,
-        kind: obj.kind,
-        label: typeof obj.label === "string" ? obj.label : undefined,
-      });
-    }
-    if (options.length > 0) return { options };
-  }
-  return null;
-}
-
-/** Yields each ```json fenced body in a text block, in order. We scan
- *  ALL of them (not just the first) so an assistant turn can emit a
- *  text summary + an added_arrows JSON + an options JSON, etc. */
-function allJsonBlocks(text: string): string[] {
-  const re = /```(?:json)?\s*\n([\s\S]*?)\n```/g;
-  const out: string[] = [];
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) out.push(m[1]);
-  return out;
-}
-
-/** Strip ALL ```json fenced code blocks from a text. Used when an
- *  assistant text block carries structured JSON tails (options /
- *  added_arrows) that we surface separately as cards / arrows; the
- *  markdown-rendered remainder should only show the human-readable
- *  prose. */
-function stripJsonCodeBlocks(text: string): string {
-  return text.replace(/```(?:json)?\s*\n[\s\S]*?\n```/g, "").trim();
-}
-
-/** Invisible component: when its `text` contains an `added_arrows`
- *  JSON block, emits "arrows-added" on the diagram bus exactly once
- *  per unique payload. Lives next to the markdown render so the
- *  emit happens as soon as the streaming text settles. */
-function ArrowsAddedSink({ text }: { text: string }) {
-  const bus = useDiagramBus();
-  const parsed = useMemo(() => parseAddedArrowsBlock(text), [text]);
-  const key = useMemo(
-    () =>
-      parsed
-        ? parsed.arrows.map((a) => `${a.from}|${a.to}|${a.label}`).join("·")
-        : null,
-    [parsed],
-  );
-  const lastKeyRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!parsed || !key) return;
-    if (lastKeyRef.current === key) return;
-    lastKeyRef.current = key;
-    bus.emit("arrows-added", { arrows: parsed.arrows });
-  }, [parsed, key, bus]);
-  return null;
-}
-
-/** Scan all ```json blocks in `text` for one shaped like
- *  `{ "added_arrows": [...] }`. Returns the validated arrow list, or
- *  null if no block matches the schema. */
-function parseAddedArrowsBlock(
-  text: string,
-): { arrows: Array<{ from: string; to: string; label: string }> } | null {
-  for (const body of allJsonBlocks(text)) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(body);
-    } catch {
-      continue;
-    }
-    if (!parsed || typeof parsed !== "object") continue;
-    const raw = (parsed as { added_arrows?: unknown }).added_arrows;
-    if (!Array.isArray(raw)) continue;
-    const arrows: Array<{ from: string; to: string; label: string }> = [];
-    for (const a of raw) {
-      if (!a || typeof a !== "object") continue;
-      const obj = a as Record<string, unknown>;
-      if (typeof obj.from !== "string") continue;
-      if (typeof obj.to !== "string") continue;
-      arrows.push({
-        from: obj.from,
-        to: obj.to,
-        label: typeof obj.label === "string" ? obj.label : "uses",
-      });
-    }
-    if (arrows.length > 0) return { arrows };
-  }
-  return null;
-}
-
-/**
- * The chat-side stub for the cards UI. We parse Claude's JSON options
- * inline here, but the actual clickable cards live on the canvas
- * (rendered by the diagram next to the new arrow). This component:
- *   1. Pushes the parsed options into the diagram via the bus
- *      ("options-ready") once per unique (target, options) payload.
- *   2. Shows a minimal "look at the canvas" prompt where the JSON
- *      would otherwise have been.
- */
-function OptionsHandoff({
-  options,
-  target,
-}: {
-  options: ConnectionOption[];
-  target: EditTarget;
-}) {
-  const bus = useDiagramBus();
-  // Cheap content-based key so we only dispatch when the parsed body
-  // actually changes (e.g. streaming finishes; React re-renders on
-  // every chunk). Without this we'd flood the diagram with duplicate
-  // events on every keystroke of Claude's streaming response.
-  const targetKey =
-    target.kind === "arrow"
-      ? `arrow:${target.from}->${target.to}`
-      : target.kind === "block"
-        ? `block:${target.id}`
-        : "new-block";
-  const optionsKey = useMemo(
-    () => `${targetKey}|${options.map((o) => o.title).join("·")}`,
-    [targetKey, options],
-  );
-  const lastSentKeyRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (lastSentKeyRef.current === optionsKey) return;
-    lastSentKeyRef.current = optionsKey;
-    bus.emit("options-ready", { target, options });
-  }, [optionsKey, target, options, bus]);
-
-  return (
-    <div className="rounded-md border border-[#3B5BD9]/30 bg-[#1A1A20] px-3 py-2 text-xs text-[#7B96E8]">
-      Please select your desired change from the canvas → {options.length}{" "}
-      suggestion{options.length === 1 ? "" : "s"} ready.
-    </div>
-  );
-}
+// Diagram-protocol parsers + sink components (parseOptionsBlock,
+// parseAddedArrowsBlock, allJsonBlocks, stripJsonCodeBlocks,
+// ArrowsAddedSink, OptionsHandoff) moved to
+// @/features/diagram/protocol/{parsers,ChatBridge}. ChatView imports
+// them as small JSX building blocks and stays unaware of the JSON
+// shapes / bus topics underneath.
 
