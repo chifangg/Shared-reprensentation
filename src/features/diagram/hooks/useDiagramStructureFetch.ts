@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useMemo,
   useState,
   type Dispatch,
   type SetStateAction,
@@ -53,6 +54,20 @@ export function useDiagramStructureFetch({
 } {
   const [state, setState] = useState<FetchState>({ kind: "idle" });
   const [retryNonce, setRetryNonce] = useState(0);
+
+  // Stable string of the current file paths. We key the fetch effect
+  // on this (not on `files` itself) so that Claude calling
+  // `write_project_file` mid-turn — which produces a new `files`
+  // reference with the same path set — does NOT cancel the in-flight
+  // fetch via the cleanup-then-rerun cycle.
+  const filesKey = useMemo(
+    () =>
+      files
+        .map((f) => f.path)
+        .sort()
+        .join("|"),
+    [files],
+  );
 
   // Reset on USER-initiated project change.
   useEffect(() => {
@@ -126,11 +141,16 @@ export function useDiagramStructureFetch({
     })();
 
     return () => controller.abort();
-    // selectedId intentionally omitted — it's only consulted inside
-    // reLayout's closure for the streaming pass; changing it mid-stream
-    // shouldn't restart the fetch (we'd lose the partial schema).
+    // `state.kind` and `selectedId` are intentionally omitted:
+    //  - state.kind: read inside the guard `state.kind !== "idle"`;
+    //    including it as a dep causes the cleanup-then-rerun cycle to
+    //    abort the fetch the moment setState({kind:"loading"}) commits.
+    //  - selectedId: only consulted inside reLayout's closure for the
+    //    streaming pass; changing it mid-stream shouldn't restart.
+    //  - files: replaced by filesKey above so mid-turn file writes
+    //    (same paths, new array ref) don't cancel an in-flight fetch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [files, retryNonce, setNodes, setEdges, state.kind]);
+  }, [filesKey, retryNonce, setNodes, setEdges]);
 
   return { state, setState, retryNonce, setRetryNonce };
 }
