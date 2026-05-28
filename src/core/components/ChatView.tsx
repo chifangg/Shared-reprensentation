@@ -318,7 +318,7 @@ function Avatar({ role }: { role: "user" | "assistant" }) {
     );
   }
   return (
-    <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-[#3B5BD9]/30 bg-[#3B5BD9]/15 text-[#7B96E8]">
+    <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-[#78716C]/30 bg-[#78716C]/15 text-[#A8A29E]">
       <Bot size={12} />
     </div>
   );
@@ -346,10 +346,10 @@ function TurnBubble({
     const visualEdit = parseVisualEditMessage(turn.text);
     if (visualEdit) {
       return (
-        <div className="rounded-lg border border-[#3B5BD9]/30 bg-[#1A1A20] px-4 py-2.5">
+        <div className="rounded-lg border border-[#78716C]/30 bg-[#1A1A20] px-4 py-2.5">
           <div className="flex items-center gap-2">
-            <Sparkles size={12} className="text-[#7B96E8]" />
-            <span className="text-xs text-[#7B96E8]/80">diagram edit</span>
+            <Sparkles size={12} className="text-[#A8A29E]" />
+            <span className="text-xs text-[#A8A29E]/80">diagram edit</span>
             <span className="text-sm font-medium text-[#E5E5E5]">
               {visualEdit.summary}
             </span>

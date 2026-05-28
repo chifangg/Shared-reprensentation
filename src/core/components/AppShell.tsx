@@ -27,11 +27,16 @@ export function AppShell() {
   const [showFileCode, setShowFileCode] = useState(true);
   const [animating, setAnimating] = useState(false);
 
+  // Default layout: diagram dominates but every other panel still has
+  // enough width to show its native content (file-tree buttons, code
+  // viewer header, chat input placeholder). Diagram lands at ~58%, chat
+  // at 16% → 1 : 3.6, close to the requested 1:4 spirit without
+  // amputating the supporting panels.
   const lastLayoutRef = useRef({
-    files: 12,
-    code: 30,
-    chat: 28,
-    diagram: 30,
+    files: 10,
+    code: 16,
+    chat: 16,
+    diagram: 58,
   });
 
   const toggle = () => {
@@ -83,22 +88,22 @@ export function AppShell() {
         orientation="horizontal"
         className="flex-1"
       >
-        <Panel id="files" collapsible collapsedSize={0} defaultSize={12} minSize={6}>
+        <Panel id="files" collapsible collapsedSize={0} defaultSize={10} minSize={8}>
           <FilesPanel />
         </Panel>
         <ResizeHandle />
 
-        <Panel id="code" collapsible collapsedSize={0} defaultSize={30} minSize={15}>
+        <Panel id="code" collapsible collapsedSize={0} defaultSize={16} minSize={12}>
           <CodePanel onHide={toggle} />
         </Panel>
         <ResizeHandle />
 
-        <Panel id="chat" defaultSize={28} minSize={18}>
+        <Panel id="chat" defaultSize={16} minSize={14}>
           <ChatView />
         </Panel>
         <ResizeHandle />
 
-        <Panel id="diagram" defaultSize={30} minSize={15}>
+        <Panel id="diagram" defaultSize={58} minSize={30}>
           <DiagramPanel />
         </Panel>
       </Group>

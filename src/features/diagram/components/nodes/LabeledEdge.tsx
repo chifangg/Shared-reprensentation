@@ -46,7 +46,7 @@ export function LabeledEdge({
   const className = (rest as { className?: string }).className;
   const recent = (data as { recent?: boolean } | undefined)?.recent === true;
   const labelClass = recent
-    ? "pointer-events-none absolute rounded-md border border-[#3B5BD9] bg-[#F4F7FF] px-2 py-0.5 text-[11px] font-medium text-[#3B5BD9] shadow-sm"
+    ? "pointer-events-none absolute rounded-md border border-[#78716C] bg-[#F5F5F4] px-2 py-0.5 text-[11px] font-medium text-[#78716C] shadow-sm"
     : "pointer-events-none absolute rounded-md border border-[#D4D4D4] bg-white px-2 py-0.5 text-[11px] font-medium text-[#444444] shadow-sm";
 
   return (

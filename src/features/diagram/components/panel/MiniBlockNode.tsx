@@ -41,11 +41,11 @@ export function MiniBlockNode({ data }: NodeProps<Node<MiniNodeData>>) {
     <div
       className={`block-node-grow group relative rounded-md border bg-white px-2.5 py-1.5 shadow-sm transition-all ${
         data.isSelected
-          ? "ring-2 ring-[#3B5BD9]/50 shadow-lg z-10"
+          ? "ring-2 ring-[#78716C]/50 shadow-lg z-10"
           : ""
       } ${
         data.isPromoted
-          ? "border-[#3B5BD9]/50 bg-[#F4F7FF]"
+          ? "border-[#78716C]/50 bg-[#F5F5F4]"
           : "border-[#D4D4D4] hover:shadow-md"
       }`}
       style={{ width: data.isSelected ? 220 : 160 }}
@@ -120,8 +120,8 @@ export function MiniBlockNode({ data }: NodeProps<Node<MiniNodeData>>) {
           }
           className={`group/btn absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full border transition-all ${
             data.isPromoted
-              ? "border-[#3B5BD9]/40 bg-[#3B5BD9] text-white hover:border-red-400 hover:bg-red-500"
-              : "border-[#D4D4D4] bg-white text-[#666666] opacity-0 group-hover:opacity-100 hover:border-[#3B5BD9] hover:text-[#3B5BD9]"
+              ? "border-[#78716C]/40 bg-[#78716C] text-white hover:border-red-400 hover:bg-red-500"
+              : "border-[#D4D4D4] bg-white text-[#666666] opacity-0 group-hover:opacity-100 hover:border-[#78716C] hover:text-[#78716C]"
           }`}
         >
           {data.isPromoted ? (

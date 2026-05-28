@@ -11,7 +11,7 @@ export function AddNewBlockButton({ onClick }: { onClick: () => void }) {
       type="button"
       onClick={onClick}
       title="Add a new module (or double-click empty canvas)"
-      className="absolute bottom-4 right-4 z-40 flex h-10 w-10 items-center justify-center rounded-full border border-[#3B5BD9]/30 bg-white text-[#3B5BD9] shadow-lg transition-colors hover:bg-[#F4F7FF]"
+      className="absolute bottom-4 right-4 z-40 flex h-10 w-10 items-center justify-center rounded-full border border-[#78716C]/30 bg-white text-[#78716C] shadow-lg transition-colors hover:bg-[#F5F5F4]"
     >
       <Plus className="h-5 w-5" strokeWidth={2} />
     </button>

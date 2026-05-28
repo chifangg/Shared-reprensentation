@@ -55,10 +55,10 @@ export function ReadProjectFileResultCard({ content }: ToolResultProps<Result>) 
 
   const lines = content.content.split("\n").length;
   return (
-    <div className="inline-flex items-center gap-2 rounded-md border border-[#3B5BD9]/25 bg-[#F4F7FF] px-3 py-1.5 text-xs text-[#3B5BD9]">
+    <div className="inline-flex items-center gap-2 rounded-md border border-[#78716C]/25 bg-[#F5F5F4] px-3 py-1.5 text-xs text-[#78716C]">
       <FileText className="h-3 w-3" strokeWidth={2} />
       <span className="font-mono">{content.path}</span>
-      <span className="text-[#3B5BD9]/60">·</span>
+      <span className="text-[#78716C]/60">·</span>
       <span className="tabular-nums">
         {lines} {lines === 1 ? "line" : "lines"} · {content.size} bytes
       </span>

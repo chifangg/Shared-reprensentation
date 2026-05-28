@@ -30,7 +30,7 @@ export function PromptInput({
   return (
     <div className="flex items-end gap-2 border-t border-[#2A2A2A] bg-[#141414] p-3">
       <textarea
-        className="flex-1 resize-none rounded-md border border-[#2A2A2A] bg-[#0F0F0F] px-3 py-2 text-sm text-[#E5E5E5] placeholder:text-[#555555] outline-none focus:border-[#3B5BD9]/50 disabled:opacity-60"
+        className="flex-1 resize-none rounded-md border border-[#2A2A2A] bg-[#0F0F0F] px-3 py-2 text-sm text-[#E5E5E5] placeholder:text-[#555555] outline-none focus:border-[#78716C]/50 disabled:opacity-60"
         placeholder={running ? "Streaming…" : "Type a message…"}
         rows={1}
         value={value}

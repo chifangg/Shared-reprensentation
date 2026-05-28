@@ -86,7 +86,7 @@ export function OptionsHandoff({
   }, [optionsKey, target, options, bus]);
 
   return (
-    <div className="rounded-md border border-[#3B5BD9]/30 bg-[#1A1A20] px-3 py-2 text-xs text-[#7B96E8]">
+    <div className="rounded-md border border-[#78716C]/30 bg-[#1A1A20] px-3 py-2 text-xs text-[#A8A29E]">
       Please select your desired change from the canvas → {options.length}{" "}
       suggestion{options.length === 1 ? "" : "s"} ready.
     </div>

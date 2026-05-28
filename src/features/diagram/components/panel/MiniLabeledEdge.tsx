@@ -35,7 +35,7 @@ export function MiniLabeledEdge({
       {label && (
         <EdgeLabelRenderer>
           <div
-            className="pointer-events-none absolute rounded-[4px] border border-[#3B5BD9]/30 bg-white px-1.5 py-px text-[10px] font-medium text-[#3B5BD9] shadow-sm"
+            className="pointer-events-none absolute rounded-[4px] border border-[#78716C]/30 bg-white px-1.5 py-px text-[10px] font-medium text-[#78716C] shadow-sm"
             style={{
               transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
             }}

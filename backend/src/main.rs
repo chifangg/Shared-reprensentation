@@ -1,8 +1,13 @@
 use clap::Parser;
 use serde_json::json;
 
+mod chat;
+mod conversations;
 mod core;
+mod diagram;
 mod examples;
+mod suggestions;
+mod tool_dispatch;
 mod web_server;
 
 #[derive(Parser)]

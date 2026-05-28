@@ -12,7 +12,7 @@
  * lifecycles, settle effect, recent-changes diff, canvas fit).
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -45,6 +45,7 @@ import {
   composeSuggestionsRound1Prompt,
 } from "../protocol/prompts";
 import { useDiagramStructureFetch } from "../hooks/useDiagramStructureFetch";
+import { useCapabilityScan } from "../hooks/useCapabilityScan";
 import { useAdaptiveFocus } from "../hooks/useAdaptiveFocus";
 import {
   useRecentChanges,
@@ -57,6 +58,7 @@ import {
 } from "../hooks/useChatSettleEffect";
 import { useCanvasFit } from "../hooks/useCanvasFit";
 import { useViewportFocusFit } from "../hooks/useViewportFocusFit";
+import { useBubbleFocus } from "../hooks/useBubbleFocus";
 import {
   useDiagramBus,
   useDiagramBusSubscribe,
@@ -71,6 +73,8 @@ import { EditSummaryToast } from "./overlays/EditSummaryToast";
 import { RegeneratingChip } from "./overlays/RegeneratingChip";
 import { AdaptiveFocusBanner } from "./overlays/AdaptiveFocusBanner";
 import { AddNewBlockButton } from "./overlays/AddNewBlockButton";
+import { IntentSurvey } from "./overlays/IntentSurvey";
+import { RegenerateDiagramButton } from "./overlays/RegenerateDiagramButton";
 import { DiagramFocusPanel } from "./panel/DiagramFocusPanel";
 
 export function DiagramCanvas({ view }: { view: DiagramView }) {
@@ -117,11 +121,22 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
   );
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
 
+  // Onboarding survey: gates the structure fetch. Null until the user
+  // submits the survey; reset to null on projectKey change AND on the
+  // explicit "Regenerate" button (which re-opens the modal).
+  const [userGoal, setUserGoal] = useState<string | null>(null);
+
+  // Capability scan fires in parallel with the survey opening — by the
+  // time the user picks Edit/Reference the picklist is usually ready.
+  const scanState = useCapabilityScan({ projectKey, files });
+
   // Structure fetch lifecycle: reset on projectKey, stream
-  // /api/diagram?view=structure into FetchState + nodes + edges.
+  // /api/diagram?view=structure into FetchState + nodes + edges. Gated
+  // on userGoal — fires only after the survey completes.
   const { state, setState, setRetryNonce } = useDiagramStructureFetch({
     projectKey,
     files,
+    userGoal,
     selectedId,
     setNodes,
     setEdges,
@@ -144,13 +159,53 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
   });
   const { editSummary, setEditSummary } = useEditSummary();
 
+  // Click-a-block-to-expand-bubbles state. Bubbles are derived from the
+  // block's provenance.functions and rendered as fan-laid ReactFlow
+  // nodes; viewport pans/zooms to the cluster and restores on collapse.
+  const { bubbleNodes, toggleBlock: toggleBubbleBlock, clear: clearBubbles } =
+    useBubbleFocus({
+      projectKey,
+      blocks: state.kind === "ready" ? state.schema.blocks : [],
+      nodes,
+    });
+
+  // Merge bubble nodes with the layout-computed nodes for the ReactFlow
+  // render. Kept derived (not state) so layoutSchema re-runs don't have
+  // to know about bubbles, and bubbles vanish the instant useBubbleFocus
+  // returns an empty array.
+  //
+  // Cast: BubbleNodeData ≠ BlockNodeData structurally, but bubble nodes
+  // route through `type: "bubble"` → FunctionBubble (not BlockNode), and
+  // are non-selectable / non-draggable, so onNodesChange never touches
+  // their data fields. Safe at runtime; types just need the alignment.
+  const renderedNodes = useMemo<Node<BlockNodeData>[]>(
+    () =>
+      bubbleNodes.length === 0
+        ? nodes
+        : [...nodes, ...(bubbleNodes as unknown as Node<BlockNodeData>[])],
+    [nodes, bubbleNodes],
+  );
+
   // Reset the small in-component state on USER-initiated project
   // change. (FetchState, nodes/edges, focused, regenerating are
   // already reset by the hooks above.)
   useEffect(() => {
     setSelectedId(null);
     setPromoted({ blocks: [], arrows: [] });
+    setUserGoal(null);
   }, [projectKey]);
+
+  /** "Regenerate" FAB handler: clear the goal so the survey re-opens,
+   *  reset the structure fetch state to idle, and wipe the canvas so
+   *  the new run starts from a blank slate. */
+  const handleRegenerate = useCallback(() => {
+    setUserGoal(null);
+    setState({ kind: "idle" });
+    setNodes([]);
+    setEdges([]);
+    setSelectedId(null);
+    setPromoted({ blocks: [], arrows: [] });
+  }, [setState, setNodes, setEdges]);
 
   // We deliberately do NOT clear `focused` when switching away from
   // focus view — the layout/panel both already gate on `view === "focus"`,
@@ -170,9 +225,13 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
   const onNodeClick = useCallback(
     (_: React.MouseEvent, node: Node) => {
       dismissRecentEdit();
+      // Ignore clicks on bubbles themselves — they're visual-only for
+      // now. The parent block (or pane click) collapses them.
+      if (node.type === "bubble") return;
       setSelectedId((prev) => (prev === node.id ? null : node.id));
+      toggleBubbleBlock(node.id);
     },
-    [dismissRecentEdit],
+    [dismissRecentEdit, toggleBubbleBlock],
   );
 
   /**
@@ -224,7 +283,8 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
     lastPaneClickRef.current = now;
     dismissRecentEdit();
     setSelectedId(null);
-  }, [handleAddNewBlock, dismissRecentEdit]);
+    clearBubbles();
+  }, [handleAddNewBlock, dismissRecentEdit, clearBubbles]);
 
   /**
    * Commit a visual rename: update the local diagram schema so the
@@ -657,7 +717,7 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
             : "recent-change-edge",
           style: {
             ...(e.style ?? {}),
-            stroke: "#3B5BD9",
+            stroke: "#78716C",
             strokeWidth: 2,
           },
           data: { ...(e.data ?? {}), recent: true },
@@ -750,7 +810,7 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
         }`}
       >
         <ReactFlow
-          nodes={nodes}
+          nodes={renderedNodes}
           edges={edges}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
@@ -807,6 +867,15 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
         )}
         {state.kind === "ready" && !pendingOptions && !intentGate && (
           <AddNewBlockButton onClick={handleAddNewBlock} />
+        )}
+        {state.kind === "ready" && userGoal !== null && (
+          <RegenerateDiagramButton onClick={handleRegenerate} />
+        )}
+        {userGoal === null && files.length > 0 && (
+          <IntentSurvey
+            scanState={scanState}
+            onComplete={(goal) => setUserGoal(goal)}
+          />
         )}
         {editSummary && (
           <EditSummaryToast

@@ -52,12 +52,12 @@ export function BlockNode({ data, selected }: NodeProps<Node<BlockNodeData>>) {
       : data.isFocused
         ? "ring-[3px] ring-[#F59E0B] focus-pulse"
         : selected
-          ? "ring-2 ring-[#3B5BD9]/40 shadow-xl"
+          ? "ring-2 ring-[#78716C]/40 shadow-xl"
           : "shadow-sm hover:shadow-md";
   const borderColor = data.isPending
-    ? "border-2 border-dashed border-[#3B5BD9] bg-[#F4F7FF]"
+    ? "border-2 border-dashed border-[#78716C] bg-[#F5F5F4]"
     : data.isContainer
-      ? "border-[#3B5BD9]/40 bg-[#F4F7FF]"
+      ? "border-[#78716C]/40 bg-[#F5F5F4]"
       : "border-[#D4D4D4]";
   const dim = data.isDimmed
     ? "opacity-30 saturate-50 transition-opacity duration-300"
@@ -82,7 +82,7 @@ export function BlockNode({ data, selected }: NodeProps<Node<BlockNodeData>>) {
           onMouseDown={(e) => e.stopPropagation()}
           onDoubleClick={(e) => e.stopPropagation()}
           title="Block actions"
-          className="absolute -right-2 -top-2 z-10 flex h-6 w-6 items-center justify-center rounded-full border border-[#D4D4D4] bg-white text-[#666666] opacity-0 shadow-sm transition-opacity hover:bg-[#F4F7FF] hover:text-[#3B5BD9] group-hover/block:opacity-100"
+          className="absolute -right-2 -top-2 z-10 flex h-6 w-6 items-center justify-center rounded-full border border-[#D4D4D4] bg-white text-[#666666] opacity-0 shadow-sm transition-opacity hover:bg-[#F5F5F4] hover:text-[#78716C] group-hover/block:opacity-100"
         >
           <MoreHorizontal className="h-3.5 w-3.5" strokeWidth={2} />
         </button>
@@ -99,19 +99,19 @@ export function BlockNode({ data, selected }: NodeProps<Node<BlockNodeData>>) {
         id="t"
         type="source"
         position={Position.Top}
-        className="!h-3 !w-3 !-translate-y-1/2 !border-2 !border-white !bg-[#999999] opacity-60 transition-all group-hover/block:!h-4 group-hover/block:!w-4 group-hover/block:!bg-[#3B5BD9] group-hover/block:opacity-100"
+        className="!h-3 !w-3 !-translate-y-1/2 !border-2 !border-white !bg-[#999999] opacity-60 transition-all group-hover/block:!h-4 group-hover/block:!w-4 group-hover/block:!bg-[#78716C] group-hover/block:opacity-100"
       />
       <Handle
         id="r"
         type="source"
         position={Position.Right}
-        className="!h-3 !w-3 !translate-x-1/2 !border-2 !border-white !bg-[#999999] opacity-60 transition-all group-hover/block:!h-4 group-hover/block:!w-4 group-hover/block:!bg-[#3B5BD9] group-hover/block:opacity-100"
+        className="!h-3 !w-3 !translate-x-1/2 !border-2 !border-white !bg-[#999999] opacity-60 transition-all group-hover/block:!h-4 group-hover/block:!w-4 group-hover/block:!bg-[#78716C] group-hover/block:opacity-100"
       />
       <Handle
         id="l"
         type="source"
         position={Position.Left}
-        className="!h-3 !w-3 !-translate-x-1/2 !border-2 !border-white !bg-[#999999] opacity-60 transition-all group-hover/block:!h-4 group-hover/block:!w-4 group-hover/block:!bg-[#3B5BD9] group-hover/block:opacity-100"
+        className="!h-3 !w-3 !-translate-x-1/2 !border-2 !border-white !bg-[#999999] opacity-60 transition-all group-hover/block:!h-4 group-hover/block:!w-4 group-hover/block:!bg-[#78716C] group-hover/block:opacity-100"
       />
       {editing ? (
         <input
@@ -131,7 +131,7 @@ export function BlockNode({ data, selected }: NodeProps<Node<BlockNodeData>>) {
           // Don't let React Flow grab the click and trigger selection.
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
-          className="w-full rounded border border-[#3B5BD9]/40 bg-white px-1.5 py-0.5 text-sm font-semibold leading-tight text-[#222222] outline-none focus:border-[#3B5BD9]"
+          className="w-full rounded border border-[#78716C]/40 bg-white px-1.5 py-0.5 text-sm font-semibold leading-tight text-[#222222] outline-none focus:border-[#78716C]"
         />
       ) : (
         <div
@@ -190,15 +190,22 @@ export function BlockNode({ data, selected }: NodeProps<Node<BlockNodeData>>) {
         id="b"
         type="source"
         position={Position.Bottom}
-        className="!h-3 !w-3 !translate-y-1/2 !border-2 !border-white !bg-[#999999] opacity-60 transition-all group-hover/block:!h-4 group-hover/block:!w-4 group-hover/block:!bg-[#3B5BD9] group-hover/block:opacity-100"
+        className="!h-3 !w-3 !translate-y-1/2 !border-2 !border-white !bg-[#999999] opacity-60 transition-all group-hover/block:!h-4 group-hover/block:!w-4 group-hover/block:!bg-[#78716C] group-hover/block:opacity-100"
       />
     </div>
   );
 }
+
+import { FunctionBubble } from "./FunctionBubble";
+import { BubbleSector } from "./BubbleSector";
 
 /**
  * Stable nodeType registry passed to ReactFlow. Module-level so the
  * object identity doesn't change between renders — React Flow warns
  * about "It looks like you've created a new nodeTypes" otherwise.
  */
-export const nodeTypes = { block: BlockNode };
+export const nodeTypes = {
+  block: BlockNode,
+  bubble: FunctionBubble,
+  bubbleSector: BubbleSector,
+};

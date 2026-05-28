@@ -190,7 +190,7 @@ export function ReadProjectFile({
   }, [files, input.path, resolve]);
 
   return (
-    <div className="flex items-center gap-2 rounded-md border border-[#3B5BD9]/20 bg-[#F4F7FF] px-3 py-1.5 text-xs text-[#3B5BD9]">
+    <div className="flex items-center gap-2 rounded-md border border-[#78716C]/20 bg-[#F5F5F4] px-3 py-1.5 text-xs text-[#78716C]">
       <Loader2 className="h-3 w-3 animate-spin" strokeWidth={2} />
       <FileText className="h-3 w-3" strokeWidth={2} />
       <span className="truncate font-mono">{input.path}</span>

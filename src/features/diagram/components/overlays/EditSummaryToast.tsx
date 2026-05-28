@@ -17,9 +17,9 @@ export function EditSummaryToast({
   onDismiss: () => void;
 }) {
   return (
-    <div className="pointer-events-auto absolute bottom-4 left-1/2 z-40 w-[min(560px,calc(100%-32px))] -translate-x-1/2 rounded-xl border border-[#3B5BD9]/30 bg-white p-3 shadow-xl">
+    <div className="pointer-events-auto absolute bottom-4 left-1/2 z-40 w-[min(560px,calc(100%-32px))] -translate-x-1/2 rounded-xl border border-[#78716C]/30 bg-white p-3 shadow-xl">
       <div className="mb-1.5 flex items-start justify-between gap-3">
-        <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-wider text-[#3B5BD9]">
+        <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-wider text-[#78716C]">
           <Check className="h-3 w-3" strokeWidth={2.5} />
           Just edited
         </div>

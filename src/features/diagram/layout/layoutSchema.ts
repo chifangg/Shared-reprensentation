@@ -207,7 +207,7 @@ export function layoutSchema(
       className: isPending ? "pending-edge" : undefined,
       style: isPending
         ? {
-            stroke: "#3B5BD9",
+            stroke: "#78716C",
             strokeWidth: 2,
             strokeDasharray: "8 6",
             opacity: 1,

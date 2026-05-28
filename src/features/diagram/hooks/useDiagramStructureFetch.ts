@@ -37,12 +37,18 @@ import { fetchStructureStream } from "../api/fetchStructure";
 export function useDiagramStructureFetch({
   projectKey,
   files,
+  userGoal,
   selectedId,
   setNodes,
   setEdges,
 }: {
   projectKey: number;
   files: FileEntry[];
+  /** Composed survey answer fed to the backend as `<user_goal>`. Null
+   *  before the user finishes the onboarding survey — the effect bails
+   *  in that case, leaving state at idle so the canvas keeps the modal
+   *  visible while waiting. */
+  userGoal: string | null;
   selectedId: string | null;
   setNodes: Dispatch<SetStateAction<Node<BlockNodeData>[]>>;
   setEdges: Dispatch<SetStateAction<Edge[]>>;
@@ -82,12 +88,14 @@ export function useDiagramStructureFetch({
   useEffect(() => {
     if (files.length === 0) return;
     if (state.kind !== "idle") return;
+    // Wait for the onboarding survey to deliver a goal before firing.
+    if (userGoal === null) return;
 
     setState({ kind: "loading", startedAt: Date.now() });
     setNodes([]);
     setEdges([]);
     const controller = new AbortController();
-    const projectContext = buildProjectContext(files, null);
+    const projectContext = buildProjectContext(files, userGoal);
 
     const blocks: DiagramBlock[] = [];
     const arrows: DiagramArrow[] = [];
@@ -149,8 +157,12 @@ export function useDiagramStructureFetch({
     //    streaming pass; changing it mid-stream shouldn't restart.
     //  - files: replaced by filesKey above so mid-turn file writes
     //    (same paths, new array ref) don't cancel an in-flight fetch.
+    //  - userGoal IS in deps: when survey completes, goal goes from
+    //    null → string and the effect re-fires (guard above no longer
+    //    bails). A subsequent regenerate flips it back to null, resets
+    //    state to idle, and the next non-null goal triggers a fresh run.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filesKey, retryNonce, setNodes, setEdges]);
+  }, [filesKey, userGoal, retryNonce, setNodes, setEdges]);
 
   return { state, setState, retryNonce, setRetryNonce };
 }

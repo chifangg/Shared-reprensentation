@@ -166,7 +166,7 @@ export function FocusMiniGraph({
         target: idMap.get(a.to)!,
         type: "miniLabeled",
         label: a.label || undefined,
-        style: { stroke: "#7B96E8", strokeWidth: 1.25, strokeDasharray: "4,3" },
+        style: { stroke: "#A8A29E", strokeWidth: 1.25, strokeDasharray: "4,3" },
       }));
     // Containment edges (parent → detail) when no explicit arrow.
     const arrowKey = new Set(

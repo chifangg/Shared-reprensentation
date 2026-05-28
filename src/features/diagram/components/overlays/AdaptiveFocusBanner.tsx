@@ -5,7 +5,7 @@
  */
 export function AdaptiveFocusBanner() {
   return (
-    <div className="pointer-events-none absolute left-1/2 top-3 z-40 -translate-x-1/2 rounded-full border border-[#3B5BD9]/30 bg-[#F4F7FF] px-3 py-1 text-[11px] font-medium text-[#3B5BD9] shadow-sm">
+    <div className="pointer-events-none absolute left-1/2 top-3 z-40 -translate-x-1/2 rounded-full border border-[#78716C]/30 bg-[#F5F5F4] px-3 py-1 text-[11px] font-medium text-[#78716C] shadow-sm">
       Adaptive focus mode · diagram will refocus when you chat
     </div>
   );

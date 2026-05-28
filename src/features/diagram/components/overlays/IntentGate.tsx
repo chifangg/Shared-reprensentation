@@ -66,13 +66,13 @@ export function IntentGate({
       }}
     >
       <div
-        className="w-[min(480px,calc(100%-48px))] rounded-2xl border border-[#3B5BD9]/30 bg-white p-5 shadow-2xl"
+        className="w-[min(480px,calc(100%-48px))] rounded-2xl border border-[#78716C]/30 bg-white p-5 shadow-2xl"
         onMouseDown={(e) => e.stopPropagation()}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex items-start justify-between gap-3">
           <div>
-            <div className="text-[11px] uppercase tracking-wider text-[#3B5BD9]">
+            <div className="text-[11px] uppercase tracking-wider text-[#78716C]">
               {eyebrow}
             </div>
             <div className="mt-0.5 text-[14px] text-[#222222]">{line}</div>
@@ -92,7 +92,7 @@ export function IntentGate({
             <button
               type="button"
               onClick={() => setMode("describe")}
-              className="flex flex-col items-start gap-1 rounded-lg border border-[#D4D4D4] bg-white px-3 py-2.5 text-left hover:border-[#3B5BD9]/40 hover:bg-[#F4F7FF]"
+              className="flex flex-col items-start gap-1 rounded-lg border border-[#D4D4D4] bg-white px-3 py-2.5 text-left hover:border-[#78716C]/40 hover:bg-[#F5F5F4]"
             >
               <span className="text-sm font-semibold text-[#222222]">
                 Describe it yourself
@@ -104,12 +104,12 @@ export function IntentGate({
             <button
               type="button"
               onClick={onAskSuggestions}
-              className="flex flex-col items-start gap-1 rounded-lg border border-[#3B5BD9]/40 bg-[#F4F7FF] px-3 py-2.5 text-left hover:bg-[#E6EEFF]"
+              className="flex flex-col items-start gap-1 rounded-lg border border-[#78716C]/40 bg-[#F5F5F4] px-3 py-2.5 text-left hover:bg-[#E6EEFF]"
             >
-              <span className="text-sm font-semibold text-[#3B5BD9]">
+              <span className="text-sm font-semibold text-[#78716C]">
                 Ask Claude for suggestions
               </span>
-              <span className="text-xs text-[#3B5BD9]/80">
+              <span className="text-xs text-[#78716C]/80">
                 Get a few options to pick from.
               </span>
             </button>
@@ -132,7 +132,7 @@ export function IntentGate({
               }}
               placeholder="What do you want done? (⌘↩ to send)"
               rows={3}
-              className="w-full resize-none rounded-md border border-[#D4D4D4] bg-white px-2.5 py-1.5 text-[13px] text-[#222222] outline-none focus:border-[#3B5BD9]"
+              className="w-full resize-none rounded-md border border-[#D4D4D4] bg-white px-2.5 py-1.5 text-[13px] text-[#222222] outline-none focus:border-[#78716C]"
             />
             <div className="flex items-center justify-between gap-2">
               <button
@@ -149,7 +149,7 @@ export function IntentGate({
                 type="button"
                 onClick={() => onDescribe(text)}
                 disabled={text.trim().length === 0}
-                className="rounded-md bg-[#3B5BD9] px-3 py-1 text-[12px] font-medium text-white shadow-sm hover:bg-[#2E48B3] disabled:cursor-not-allowed disabled:bg-[#9CA3AF]"
+                className="rounded-md bg-[#78716C] px-3 py-1 text-[12px] font-medium text-white shadow-sm hover:bg-[#57534E] disabled:cursor-not-allowed disabled:bg-[#9CA3AF]"
               >
                 Send ⌘↩
               </button>

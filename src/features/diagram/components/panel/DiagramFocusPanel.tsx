@@ -82,7 +82,7 @@ export function DiagramFocusPanel({
         aria-label="Resize focus panel"
         role="separator"
       >
-        <div className="mx-auto h-full w-px bg-[#E8E8E8] transition-colors group-hover:bg-[#3B5BD9]/40" />
+        <div className="mx-auto h-full w-px bg-[#E8E8E8] transition-colors group-hover:bg-[#78716C]/40" />
       </div>
 
       <header className="flex items-start justify-between gap-2 border-b border-[#E8E8E8] px-4 py-3">
@@ -123,7 +123,7 @@ export function DiagramFocusPanel({
         )}
       </div>
       <footer className="border-t border-[#E8E8E8] px-4 py-2 text-[10px] leading-snug text-[#999999]">
-        Click <span className="font-medium text-[#3B5BD9]">+</span> on any
+        Click <span className="font-medium text-[#78716C]">+</span> on any
         sub-piece to add it to the main diagram.
       </footer>
     </aside>

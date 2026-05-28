@@ -88,13 +88,13 @@ export function ConnectionOptionsOverlay({
       }}
     >
       <div
-        className="w-[min(760px,calc(100%-48px))] rounded-2xl border border-[#3B5BD9]/30 bg-white p-5 shadow-2xl"
+        className="w-[min(760px,calc(100%-48px))] rounded-2xl border border-[#78716C]/30 bg-white p-5 shadow-2xl"
         onMouseDown={(e) => e.stopPropagation()}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-3 flex items-center justify-between gap-3">
           <div>
-            <div className="text-[11px] uppercase tracking-wider text-[#3B5BD9]">
+            <div className="text-[11px] uppercase tracking-wider text-[#78716C]">
               {headerEyebrow}
             </div>
             <div className="mt-0.5 text-[14px] text-[#222222]">
@@ -117,7 +117,7 @@ export function ConnectionOptionsOverlay({
         {/* "Others" card: expand to text input, submit free-form intent. */}
         <div
           className={`flex flex-col items-start gap-1.5 rounded-lg border border-dashed border-[#D4D4D4] bg-[#FAFAFA] px-3 py-2 ${
-            othersExpanded ? "" : "cursor-pointer hover:bg-[#F4F7FF]"
+            othersExpanded ? "" : "cursor-pointer hover:bg-[#F5F5F4]"
           }`}
           onClick={() => {
             if (!othersExpanded) setOthersExpanded(true);
@@ -148,7 +148,7 @@ export function ConnectionOptionsOverlay({
                   }
                 }}
                 placeholder="Describe what you want Claude to do for this arrow"
-                className="w-full rounded-md border border-[#D4D4D4] bg-white px-2 py-1 text-[12px] text-[#222222] outline-none focus:border-[#3B5BD9]"
+                className="w-full rounded-md border border-[#D4D4D4] bg-white px-2 py-1 text-[12px] text-[#222222] outline-none focus:border-[#78716C]"
               />
               <div className="flex w-full items-center justify-end gap-1.5">
                 <button
@@ -165,7 +165,7 @@ export function ConnectionOptionsOverlay({
                   type="button"
                   onClick={submitOthers}
                   disabled={otherText.trim().length === 0}
-                  className="rounded-md bg-[#3B5BD9] px-2.5 py-0.5 text-[11px] font-medium text-white shadow-sm hover:bg-[#2E48B3] disabled:cursor-not-allowed disabled:bg-[#9CA3AF]"
+                  className="rounded-md bg-[#78716C] px-2.5 py-0.5 text-[11px] font-medium text-white shadow-sm hover:bg-[#57534E] disabled:cursor-not-allowed disabled:bg-[#9CA3AF]"
                 >
                   Send ↵
                 </button>

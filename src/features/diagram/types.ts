@@ -73,6 +73,36 @@ export type FetchState =
   | { kind: "error"; message: string };
 
 // ---------------------------------------------------------------------------
+// Capability scan + onboarding survey
+// ---------------------------------------------------------------------------
+
+/** Lightweight block-like payload emitted by /api/diagram view=capability_scan.
+ *  Just enough to render as a picklist option in the survey — no arrows,
+ *  no provenance, no parent. */
+export type CapabilityCandidate = {
+  id: string;
+  label: string;
+  caption: string;
+};
+
+export type CapabilityScanState =
+  | { kind: "idle" }
+  | { kind: "loading"; startedAt: number }
+  | { kind: "ready"; candidates: CapabilityCandidate[] }
+  | { kind: "error"; message: string };
+
+export type IntentVerb = "understand" | "edit" | "reference" | "other";
+
+export type IntentRole =
+  | "frontend"
+  | "backend"
+  | "fullstack"
+  | "ml"
+  | "security"
+  | "design"
+  | "other";
+
+// ---------------------------------------------------------------------------
 // Visual-edit targets and options (the chat ↔ diagram protocol payloads)
 // ---------------------------------------------------------------------------
 
@@ -159,6 +189,44 @@ export type BlockNodeData = {
   /** Open the block-level action menu (cards overlay) for this block.
    *  Wired on the canvas via attachInteractive. */
   onActions?: () => void;
+};
+
+export type BubbleNodeData = {
+  /** Raw function/method identifier from provenance.functions. Kept
+   *  alongside displayLabel so future edit-flow can match against the
+   *  literal name in source. Browser tooltip on the bubble. */
+  label: string;
+  /** Humanized version of `label` (e.g. `download_image` → "Download
+   *  image"). What the bubble actually renders. */
+  displayLabel: string;
+  /** Id of the parent block this bubble belongs to. Used by the click
+   *  handler to dismiss the bubble cluster + restore the previous
+   *  viewport when the user clicks a bubble back through the parent. */
+  parentBlockId: string;
+  /** True while the cluster is animating OUT (user just collapsed it
+   *  but bubbles are still in the DOM playing the exit animation). The
+   *  bubble component branches its CSS animation class on this. */
+  isExiting: boolean;
+  /** Translate offset (px) from the bubble's final position back to the
+   *  parent block's center. The pop-in animation starts at this offset
+   *  and tweens to (0,0), so visually the bubble shoots OUT of the
+   *  block; pop-out is the reverse. */
+  enterDx: number;
+  enterDy: number;
+};
+
+/** Faint annular-sector backdrop drawn behind the bubble cluster. Acts
+ *  as a visual "this came from here" hint — too easy to lose track of
+ *  which block the bubbles attach to once the viewport has zoomed in. */
+export type BubbleSectorNodeData = {
+  parentBlockId: string;
+  outerRadius: number;
+  innerRadius: number;
+  /** Sector arc endpoints in degrees (0 = right, 90 = down). */
+  startDeg: number;
+  endDeg: number;
+  /** Pop-out flag — same gating as BubbleNodeData. */
+  isExiting: boolean;
 };
 
 export type MiniNodeData = {
