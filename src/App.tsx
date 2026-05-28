@@ -1,5 +1,6 @@
 import { AppShell } from "@/core/components/AppShell";
 import { ProjectProvider } from "@/core/project";
+import { DiagramBusProvider } from "@/features/diagram/protocol/bus";
 
 /**
  * Bare-template shell for customer-facing Claude-powered apps.
@@ -23,7 +24,9 @@ import { ProjectProvider } from "@/core/project";
 export default function App() {
   return (
     <ProjectProvider>
-      <AppShell />
+      <DiagramBusProvider>
+        <AppShell />
+      </DiagramBusProvider>
     </ProjectProvider>
   );
 }

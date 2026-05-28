@@ -1,234 +1,220 @@
 # Getting started
 
-A hands-on walkthrough of the template using the three example tools it
-ships with. Follow this once, top to bottom, and you'll understand how
-to add your own.
+A hands-on walkthrough of what this app actually does. Follow this
+once, top to bottom, and you'll understand the chat ↔ diagram loop —
+which is the whole point.
 
-- Looking for the high-level pitch, configuration reference, and
-  architecture diagrams? → [main README](../README.md).
-- Looking for a deep dive on tool plumbing and conventions? →
-  [docs/tools.md](./tools.md).
+- High-level pitch + repo layout + configuration → [main README](../README.md).
+- Architecture diagrams + dependency rules → [ARCHITECTURE.md](../ARCHITECTURE.md).
+- The diagramming protocol reference → [docs/diagram.md](./diagram.md).
+- Adding new client / server tools → [docs/tools.md](./tools.md).
 
-## 1. Run the template
+## 1. Run the app
 
 Prerequisites: [Bun](https://bun.sh) 1.3+, Rust 1.70+ with cargo, and
-the [Claude Code CLI](https://claude.ai/code) on `PATH`.
+the [Claude Code CLI](https://claude.ai/code) on `PATH`. Export your
+`ANTHROPIC_API_KEY` (or whichever auth the Claude CLI is configured
+for).
 
 ```bash
 bun install
-bun run build                      # compiles the frontend into dist/
-cd backend
-cargo build --bins                 # builds claude-ui-app + tool-bridge
-cargo run --bin claude-ui-app      # serves on http://127.0.0.1:8080
+bun run dev                                       # http://localhost:1420
+# In a second terminal:
+cd backend && cargo run --bin claude-ui-app       # http://localhost:8080
 ```
 
-Open the URL. The welcome panel explains server tools, client tools,
-and the chat shell, plus three trigger prompts — one per shipped tool.
+Open `http://localhost:1420`. You should see four empty panels:
+Files | Code | Chat | Diagram.
 
-> **After editing any Rust file under `backend/src/`**: stop the running
-> process (Ctrl+C), `cargo build --bins` again, restart, and click
-> "New chat" in the UI. The running backend has its binary loaded in
-> memory and won't pick up rebuilds otherwise; within a chat, Claude
-> caches prior tool results in context so stale state can mask the fix.
+## 2. Upload a project
 
-## 2. Trace the server-tool example: `get_weather`
+In the Files panel, click **upload folder** and pick a small project
+(anything under a few hundred files). `.zip` works too — useful if
+you want to share the exact upload as a fixture.
 
-Click **"What's the weather like in Tokyo?"**. Here's what happens.
+The diagram panel immediately shows "Claude is drawing the diagram…"
+and starts streaming blocks. First block usually appears within ~5 s;
+the bottom-right "Generating more — N so far" chip tracks progress
+until the layout settles.
 
-**Declaration** — [backend/src/main.rs](../backend/src/main.rs):
+## 3. Chat without editing
 
-```rust
-b.server_tool(
-    "get_weather",
-    "Return the current weather for a city. …",
-    json!({ "type": "object", "properties": { "location": { "type": "string" } }, "required": ["location"] }),
-    |input| async move { examples::weather::fetch(input).await },
-);
-```
+Type something like "what does this codebase do?" and hit Send.
 
-**Implementation** — [backend/src/examples/weather.rs](../backend/src/examples/weather.rs):
-a real call to the free [Open-Meteo](https://open-meteo.com) API (no
-key required). Geocodes the city, fetches current weather, maps WMO
-weather codes to human summaries.
+What you'll see:
 
-**What happens when you send the prompt:**
+- A "thinking…" bubble while Claude reads files (it'll fire a few
+  `read_project_file` client tools — each renders inline in the
+  conversation as it's called).
+- A natural-language reply.
+- **The diagram does NOT regenerate** — Claude only read files; no
+  files changed.
 
-1. The browser opens a WebSocket and sends your prompt.
-2. The backend spawns `claude` with `--mcp-config` pointing at the
-   `tool-bridge` binary.
-3. Claude reads the tool description, decides to call `get_weather`
-   with `{ "location": "Tokyo" }`.
-4. The bridge forwards the call to `/__tools/dispatch` on the main
-   server. The Rust handler runs, hits Open-Meteo, returns JSON.
-5. Claude gets the JSON as a `tool_result`, writes a natural-language
-   reply. The `WeatherResultCard` component renders the tool result as
-   a card with an icon + temperature instead of raw JSON.
+This is the gate that keeps the diagram from churning on every chat
+turn. The check is in
+[src/features/diagram/hooks/useChatSettleEffect.ts](../src/features/diagram/hooks/useChatSettleEffect.ts):
+auto-regen only fires when the just-finished turn used
+`edit_project_file` or `write_project_file`.
 
-Try the same prompt with a different city — "Oslo", "Mumbai", "São
-Paulo" — and you'll get real, different weather each time.
+## 4. Chat with editing
 
-**Make it yours:** swap the Open-Meteo call for your weather provider.
-Only the body of `examples::weather::fetch` changes; the rest of the
-plumbing — schema validation, MCP wiring, result-card rendering — stays
-exactly the same.
+Try: "Add a `// hello, world` comment at the top of the first source
+file you find."
 
-## 3. Trace the client-tool example: `show_choice`
+What you'll see:
 
-Click **"Help me pick a color for a new website: blue, green, or
-purple."**. Claude calls a *client* tool — one where the handler is a
-React component, not Rust.
+1. `read_project_file` to inspect.
+2. `edit_project_file` (or `write_project_file`) — the affected file
+   updates in the Code panel in real time as Claude calls the tool.
+3. Claude summarizes in 1–2 sentences.
+4. The diagram panel blurs and re-streams (auto-regen).
+5. A floating **"Just edited"** toast lands at the bottom-center
+   showing the file pill + Claude's summary line.
+6. Any new blocks or arrows that appeared during the regen glow blue
+   ("recent change") until your next action.
 
-Client tools live in **three** places. Understanding why there are
-three is the key to the template.
+The toast and glow are intentional — they show the user *what* just
+happened on the diagram, separate from scrolling the chat to find the
+relevant assistant turn.
 
-**Place 1** — backend declaration so Claude knows the tool exists.
-[backend/src/main.rs](../backend/src/main.rs):
+## 5. Visual edit — draw an arrow
 
-```rust
-b.client_tool(
-    "show_choice",
-    "Present the user with a short list of choices and wait for them to pick one. …",
-    json!({
-        "type": "object",
-        "properties": {
-            "prompt":  { "type": "string" },
-            "options": { "type": "array", "items": { "type": "string" }, "minItems": 2 }
-        },
-        "required": ["prompt", "options"]
-    }),
-);
-```
+Hover a block. Four connection handles appear (one per side, grey
+dots that tint blue + grow). Pull from one block to another.
 
-No handler! Client tools don't have a Rust handler; their handler is
-the React component.
+A dashed blue marching-ants arrow shows up immediately. The **Intent
+Gate** modal opens with two paths:
 
-**Place 2** — the React component that renders the tool.
-[src/core/tools/builtins/ShowChoice.tsx](../src/core/tools/builtins/ShowChoice.tsx):
+- **Describe it yourself** — for when you already know the change you
+  want. Skips the suggestions round-trip.
+- **Ask Claude for suggestions** — for when you'd rather see a few
+  options. Claude returns 3–5 cards.
 
-```tsx
-export function ShowChoice({ input, resolve }: ClientToolProps<...>) {
-  return (
-    <div>
-      <p>{input.prompt}</p>
-      {input.options.map((opt, i) => (
-        <Button key={i} onClick={() => resolve({ index: i, value: opt })}>
-          {opt}
-        </Button>
-      ))}
-    </div>
-  );
-}
-```
+### Ask suggestions
 
-Two props: `input` (the object Claude passed, matching the schema
-above) and `resolve(value)` (the function you call with the result).
-Calling `resolve` is what returns a `tool_result` to Claude.
+Click **"Ask Claude for suggestions"**.
 
-**Place 3** — wire the component to the tool name, and optionally add a
-result renderer for a nicer confirmation bubble.
-[src/main.tsx](../src/main.tsx):
+1. A "diagram edit" bubble appears in chat with the summary
+   ("Suggestions for connection"). The actual prompt body — context
+   lines, instructions, kind guide — is collapsed behind a "see
+   prompt" expander.
+2. Claude streams a JSON options block. The chat replaces the JSON
+   with a minimal "Please select your desired change from the canvas
+   → N suggestions ready." line.
+3. On the diagram canvas, a cards overlay appears with the options +
+   a free-form "Others…" card.
+4. Each option has a `kind` chip:
+   - **link** (blue) — `kind: "block_level"`. Picking this keeps the
+     arrow and applies the label Claude proposed.
+   - **detail** (orange) — `kind: "detail"`. Picking drops the arrow;
+     the change is small enough to live inside one block.
+   - **no change** (grey) — `kind: "none"`. Picking drops the arrow
+     and Claude confirms why no change is needed.
+5. Click an option. Claude executes the change, writes the relevant
+   file(s), and emits a trailing `added_arrows` JSON listing any new
+   dependencies the edit actually introduced. The diagram picks those
+   up immediately with marching-ants, settling once the turn finishes.
 
-```tsx
-registerClientTool("show_choice", ShowChoice);
-registerToolResult("show_choice", ChoiceResultCard); // optional
-```
+### Describe yourself
 
-The string must match the name in `b.client_tool(...)` exactly.
+Click **"Describe it yourself"** instead. A textarea opens. Type a
+specific change ("App.tsx fetches user data from the auth service")
+and press ⌘↩. Claude executes directly — skipping the suggestions
+round-trip — and the same `added_arrows` tail flows back.
 
-**What happens when you send the prompt:**
+If your description is vague ("make it better", "refactor"), Claude
+falls back to returning options instead of editing.
 
-1. Claude calls `show_choice` with
-   `{ "prompt": "Pick a color", "options": ["blue", "green", "purple"] }`.
-2. The bridge forwards the call to `/__tools/dispatch` like before —
-   but this time the main server sees it's a client tool, so it
-   generates a `tool_call_id`, parks a `oneshot::Sender`, and pushes a
-   `tool_call_for_ui` event down the WebSocket.
-3. The chat view pairs the pending call to the preceding `tool_use`
-   block (matching by tool name + input equality, since backend's
-   `tool_call_id` and Claude's `tool_use.id` aren't linked on the wire)
-   and renders `<ShowChoice>` inline with `input` + `resolve` wired up.
-4. You click a button. `resolve({ index: 1, value: "green" })` fires.
-5. The browser sends `tool_result_from_ui` back over the WebSocket.
-   The backend wakes the parked oneshot; the original HTTP dispatch
-   returns; the bridge hands the result to Claude.
-6. Claude writes "Green it is — shall I…" and the stream continues.
-   `ChoiceResultCard` renders the resolved tool_result as a green-check
-   pill.
+### Others…
 
-If you don't click within `APP_CLIENT_TOOL_TIMEOUT_SECS` (default
-120 s), Claude gets a timeout error and the card renders a "Selected
-(unknown)" fallback so the UI stays sensible.
+In the cards overlay, click the dashed **Others…** card. It expands
+to a free-form text input. Type a custom intent and Send — same
+behavior as "Describe yourself" from inside the cards UI.
 
-## 4. Trace the paired example: `search_flights` → `show_flight_options`
+## 6. Visual edit — block actions
 
-Click **"Find me flights from SFO to Tokyo on 2026-05-10."**. This one
-exercises the full pattern: a domain **server tool** produces data,
-then Claude calls a **client tool** to have the user pick from it.
+Hover an existing block. A "⋯" affordance appears at its top-right.
+Click it. The Intent Gate opens with "Block action" eyebrow. Same
+two paths (describe vs ask) — Claude proposes changes scoped to that
+block.
 
-1. Claude calls `search_flights({ origin: "SFO", destination: "Tokyo",
-   date: "2026-05-10" })`. The handler
-   ([backend/src/examples/flights.rs](../backend/src/examples/flights.rs))
-   is a deterministic procedural generator seeded by the input — same
-   query always returns the same three flights, different queries
-   diverge. No paid aggregator required for the demo.
-2. Claude reads the result and calls
-   `show_flight_options({ origin, destination, date, flights })`. The
-   `<FlightResults>` component renders a card per flight with airline,
-   flight number, times, duration, stops, cabin, and a "Select" button.
-3. You click "Select" on a flight. `resolve({ picked_id, picked_flight })`
-   fires; the result flows back to Claude; Claude confirms.
-   `<FlightPickResultCard>` renders the picked flight as a summary.
+## 7. Visual edit — add a new module
 
-Run the same prompt with different routes — JFK → LHR, Paris →
-Bangkok — and you'll see different airlines (Air Canada, Lufthansa,
-ANA, Emirates, …) and prices/times per route. IATA codes for ~30
-common cities are resolved; anything else falls back to the first three
-letters of the name.
+Two ways:
 
-## 5. Modify an example
+- **Floating "+" FAB** at the bottom-right of the canvas.
+- **Double-click empty canvas.**
 
-Two quick experiments to build intuition.
+A dashed blue placeholder block appears with the label "New module…",
+then the Intent Gate opens with "New module" eyebrow. Pick any of the
+options or describe what you want. Claude creates the file(s); the
+placeholder's label updates eagerly to the option's title; the
+auto-regen settles it into a real block in its real layout position.
 
-**A. Swap weather providers.** Open
-[backend/src/examples/weather.rs](../backend/src/examples/weather.rs),
-replace the Open-Meteo URLs with your preferred API (AccuWeather,
-Pirate Weather, whatever), return the same JSON shape. Rebuild, restart,
-click "New chat", run the Tokyo prompt again. The rest of the stack
-doesn't notice.
+## 8. Visual edit — rename a block
 
-**B. Add a "business class only" filter to flights.** Edit
-`examples::flights::search` to take an optional `cabin` argument (you'd
-also add it to the schema in `main.rs`), filter the generator output.
-Claude will pick up the new field from the description and pass it
-when relevant.
+Double-click a block's label. An inline input appears. Type a new
+name, press Enter. Two things happen:
 
-## 6. Build your prototype
+- The block's label updates immediately on the diagram.
+- A "Renamed block: old → new" diagram-edit bubble appears in chat.
+  Claude reads the block's recorded files + functions and rewrites the
+  corresponding identifier(s) in source.
 
-To replace the examples with your research tools:
+This is the slow path: the diagram reflects the new label instantly
+(so the user has feedback), and Claude catches up in the background.
 
-1. Delete the `get_weather`, `show_choice`, `search_flights`,
-   `show_flight_options` registrations from
-   [backend/src/main.rs](../backend/src/main.rs). Register your own
-   `server_tool(...)` and `client_tool(...)` calls in the same
-   `build_tool_registry()` function.
-2. Delete `backend/src/examples/` (or leave as reference) and add your
-   own domain module.
-3. Replace the `src/core/tools/builtins/*.tsx` components with your own
-   under `src/features/<your-app>/`. Register via `registerClientTool`
-   and `registerToolResult` in `src/main.tsx`.
-4. Tweak the empty-state copy in
-   [src/core/components/ChatView.tsx](../src/core/components/ChatView.tsx)
-   so the suggested prompts exercise *your* tools, not the defaults.
-5. Swap the page title in [index.html](../index.html).
+## 9. Adaptive focus
 
-## Where to go next
+Click the view dropdown in the diagram panel header. Switch from
+**"Project overview"** to **"Adaptive focus"**.
 
-- **[Main README](../README.md)** — configuration env vars, project
-  layout, prerequisites, known gaps.
-- **[docs/tools.md](./tools.md)** — the complete tool reference:
-  server vs client decision matrix, schema conventions, end-to-end
-  flow with the exact WebSocket/HTTP frames, tool-result renderers,
-  and debugging tips.
-- **[CLAUDE.md](../CLAUDE.md)** — architecture notes, CLI invocation
-  shape, gotchas. Primarily for Claude Code itself when working on
-  this repo, but useful for humans too.
+You'll see a top-center "Adaptive focus mode · diagram will refocus
+when you chat" banner. The main canvas looks the same until you send
+a chat message.
+
+Send a chat about a specific topic ("explain the upload flow"). After
+~1.2 s of debounce (so streaming chunks don't trigger a fetch per
+chunk):
+
+1. A "Refocusing on the conversation…" pill appears top-right.
+2. A side panel slides in from the right.
+3. The base blocks the chat is about glow yellow (focus pulse);
+   everything else dims to 30% opacity.
+4. The camera pans to the focused blocks.
+5. Detail blocks stream into the side panel — a mini React-Flow with
+   ghost re-stamps of the focused base blocks at the top and
+   zoomed-in detail blocks below.
+
+Click a detail block in the panel to expand it (shows full file +
+function lists). Click the "+" on a detail block to promote it onto
+the main canvas — it gets added to the schema alongside the base
+blocks and persists across panel close / re-open.
+
+Switch the view back to "Project overview": the panel disappears, the
+dimming clears, but the focused state is retained — switch back to
+focus and the previous content is right there without re-asking.
+
+## 10. New chat / re-upload
+
+- **"New chat"** (top-right of the chat panel) wipes the conversation
+  and generates a fresh session UUID. The diagram does NOT wipe —
+  this is the `projectKey` vs `filesKey` invariant. Claude can
+  legitimately keep editing the same project across multiple chats.
+- **"clear files and re-upload"** at the bottom of the Files panel
+  wipes everything: files, diagram, chat (implicitly, since uploading
+  a new project resets `projectKey`).
+
+## Where to next
+
+- **[docs/diagram.md](./diagram.md)** — the diagramming protocol in
+  full: events, sentinels, JSON tails, sequence diagrams, settle-
+  effect branches, `pending` state machines.
+- **[ARCHITECTURE.md](../ARCHITECTURE.md)** — the layered model and
+  the dependency rule between `src/core/*` and `src/features/diagram/*`.
+- **[docs/tools.md](./tools.md)** — adding new client / server tools.
+  The patterns are still accurate even though this fork doesn't ship
+  the original example tools (`get_weather`, `show_choice`,
+  `search_flights`) anymore.
+- **[CONTRIBUTING.md](../CONTRIBUTING.md)** — coding standards, PR
+  workflow, testing expectations.

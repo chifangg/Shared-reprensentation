@@ -30,10 +30,10 @@ temp_lib/
 
 .cursor/
 AGENTS.md
-CLAUDE.md
 *_TASK.md
 
-# Claude project-specific files
+# Claude project-specific files (worktree caches + transcripts —
+# NOT the committed CLAUDE.md orientation doc at the repo root)
 .claude/
 
 .env

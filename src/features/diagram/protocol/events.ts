@@ -1,0 +1,51 @@
+/**
+ * Typed message map for the chat ↔ diagram pub/sub bus.
+ *
+ * One entry per topic; the payload type for each topic must match
+ * what the emit-side passes and the subscribe-side expects. Both
+ * sides import from this single source of truth, so a schema change
+ * on the wire shape becomes a compile-time error.
+ */
+
+import type {
+  ArrowsAddedDetail,
+  OptionExecutedDetail,
+  OptionsReadyDetail,
+  VisualEditDetail,
+} from "../types";
+
+export type DiagramBusMessageMap = {
+  /**
+   * Diagram → ChatView. The diagram dispatches a pre-formatted user-
+   * message prompt; ChatView's listener routes it through `handleSend`
+   * so it shows up in conversation alongside typed messages.
+   */
+  "visual-edit": VisualEditDetail;
+
+  /**
+   * ChatView → Diagram. Once ChatView's response parser finds a JSON
+   * options block in an assistant turn whose preceding user turn
+   * carried an edit-target sentinel, it dispatches this with the
+   * parsed options + the target. Diagram opens the cards overlay.
+   */
+  "options-ready": OptionsReadyDetail;
+
+  /**
+   * Diagram → Diagram (intra-feature). Fired when the user clicks a
+   * card in the options overlay (or submits "Others", or picks via
+   * IntentGate's describe path). The settle-effect's per-target
+   * outcome handling reads from chosenOptionsRef keyed by the
+   * serialized target; this event populates that ref.
+   */
+  "option-executed": OptionExecutedDetail;
+
+  /**
+   * ChatView → Diagram. Once the assistant turn has a trailing
+   * `added_arrows` JSON block (see buildArrowJsonSuffix), the parser
+   * dispatches this with the resolved arrow list. Diagram adds them
+   * to the schema with pending="claude" until chatRunning settles.
+   */
+  "arrows-added": ArrowsAddedDetail;
+};
+
+export type DiagramBusTopic = keyof DiagramBusMessageMap;

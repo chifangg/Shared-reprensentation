@@ -30,10 +30,13 @@ in-flight work.
 2. **Description** — state what's broken (or missing), what you
    changed, and anything a reviewer should watch for.
 
-3. **Docs** — if behavior changes, update the affected READMEs
-   ([main](README.md), [docs/README.md](docs/README.md),
-   [docs/tools.md](docs/tools.md), [CLAUDE.md](CLAUDE.md),
-   [src/core/README.md](src/core/README.md)) in the same PR.
+3. **Docs** — if behavior changes, update the affected docs
+   ([main README](README.md), [ARCHITECTURE.md](ARCHITECTURE.md),
+   [docs/README.md](docs/README.md), [docs/tools.md](docs/tools.md),
+   [docs/diagram.md](docs/diagram.md), [CLAUDE.md](CLAUDE.md),
+   [src/core/README.md](src/core/README.md),
+   [src/features/diagram/README.md](src/features/diagram/README.md))
+   in the same PR.
 
 4. **Dependencies** — justify any new package; prefer stdlib / existing
    deps where possible. Track new deps in `package.json` /
@@ -52,9 +55,13 @@ cd backend && cargo fmt    # before committing Rust
 
 Manual UI smoke: after any change, run the backend (`cargo run --bin
 claude-ui-app`), open http://localhost:1420 in dev mode (`bun run dev`)
-or :8080 in prod, and click through the three example prompts. Client
-tool round-trips (the color picker, the flight picker) are the most
-fragile path — always hit them end-to-end.
+or :8080 in prod, upload a small project, and exercise the visual-edit
+flows — drawing an arrow, double-clicking the canvas for a new module,
+and double-clicking a block label to rename. The client-tool
+round-trips (`read_project_file` → `edit_project_file`) and the
+chat ↔ diagram bus emits are the most fragile paths; always hit them
+end-to-end. See [docs/README.md](docs/README.md) for the full smoke
+checklist.
 
 > **After editing backend Rust code**: stop the running backend (Ctrl+C),
 > `cargo build --bins`, restart, and click "New chat" in the UI. The
@@ -64,7 +71,7 @@ fragile path — always hit them end-to-end.
 
 ## Coding standards
 
-### Frontend (TypeScript / React 19)
+### Frontend (TypeScript / React 18)
 
 - TypeScript for all new code; no `any` without a justifying comment.
 - Functional components + hooks. No class components.
@@ -76,6 +83,15 @@ fragile path — always hit them end-to-end.
   directly from components or re-implementing tool-call routing.
 - JSDoc comments for exported functions and components when the WHY
   isn't obvious from the code.
+- **Domain features go under `src/features/<feature>/`.** Never add
+  domain code to `src/core/*` — see [src/core/README.md](src/core/README.md).
+  The current canonical feature is [src/features/diagram/](src/features/diagram/);
+  its layout is the template for new features.
+- **For diagram changes specifically**: see [docs/diagram.md](docs/diagram.md)
+  for the chat ↔ diagram protocol reference. The seam goes through
+  `DiagramBusProvider` — don't bypass it with `window.dispatchEvent`
+  for new cross-component messages. Add a new topic to
+  `DiagramBusMessageMap` instead.
 
 ### Backend (Rust)
 

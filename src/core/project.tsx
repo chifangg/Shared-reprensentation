@@ -646,54 +646,10 @@ function languageFromPath(path: string): Language {
   return LANGUAGE_BY_EXT[ext] ?? "markup";
 }
 
-/**
- * Serialize the uploaded project + the user's goal as a single string
- * suitable for prepending to a Claude prompt.
- *
- * Both the suggestion-generation backend call and the regular chat
- * stream use this — keeping the format in one place ensures Claude's
- * "view" of the project is consistent across the two paths.
- */
-export function buildProjectContext(
-  files: FileEntry[],
-  goal: string | null,
-): string {
-  const tree = files
-    .map((f) => f.path)
-    .sort()
-    .join("\n");
-
-  const PER_FILE_CAP = 16 * 1024;
-  const TOTAL_CAP = 80 * 1024;
-
-  let totalSoFar = 0;
-  const fileBlocks = files
-    .map((f) => {
-      if (f.content.includes("\0")) {
-        return `<file path="${f.path}">\n[binary file, ${f.size} bytes]\n</file>`;
-      }
-
-      if (totalSoFar >= TOTAL_CAP) {
-        return `<file path="${f.path}">\n[${f.size} bytes — omitted, total context cap reached]\n</file>`;
-      }
-
-      let body = f.content;
-      let truncatedNote = "";
-      if (body.length > PER_FILE_CAP) {
-        body = body.slice(0, PER_FILE_CAP);
-        truncatedNote = `\n... [truncated, full file is ${f.size} bytes]`;
-      }
-      totalSoFar += body.length;
-      return `<file path="${f.path}">\n${body}${truncatedNote}\n</file>`;
-    })
-    .join("\n\n");
-
-  const goalBlock = goal
-    ? `\n\n<user_goal>\n${goal}\n</user_goal>`
-    : "";
-
-  return `<project_context>\n<tree>\n${tree}\n</tree>\n\n${fileBlocks}${goalBlock}\n</project_context>`;
-}
+// buildProjectContext moved to @/features/diagram/api/buildProjectContext —
+// the diagram is its only caller, and the per-file/total caps are diagram-
+// specific. buildChatSystemPrompt below stays in core because it ships the
+// core read/write/edit_project_file tool instructions every chat session.
 
 /**
  * Lighter project context for the chat path. Instead of dumping every
