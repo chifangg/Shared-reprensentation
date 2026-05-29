@@ -2,10 +2,10 @@
  * Owns the capability_scan fetch lifecycle.
  *
  * Fires on USER-initiated project change (projectKey bump) and produces
- * a CapabilityScanState for the onboarding survey to consume. The
- * survey opens at the same moment so user time on Q1 (verb pick)
- * overlaps with the scan latency — by the time they reach Q2 (capability
- * pick) the candidates are usually already in.
+ * a CapabilityScanState for the onboarding survey to consume. The survey
+ * stays gated behind a loading overlay until this reaches `ready`/`error`
+ * (see DiagramCanvas) — both survey branches pick from these candidates,
+ * so opening before they arrive would show an empty picklist.
  *
  * Mirrors the filesKey + cleanup-via-abort pattern from
  * useDiagramStructureFetch; same caveat about omitting `state.kind`

@@ -74,6 +74,7 @@ import { RegeneratingChip } from "./overlays/RegeneratingChip";
 import { AdaptiveFocusBanner } from "./overlays/AdaptiveFocusBanner";
 import { AddNewBlockButton } from "./overlays/AddNewBlockButton";
 import { IntentSurvey } from "./overlays/IntentSurvey";
+import { SurveyPreparingOverlay } from "./overlays/SurveyPreparingOverlay";
 import { RegenerateDiagramButton } from "./overlays/RegenerateDiagramButton";
 import { DiagramFocusPanel } from "./panel/DiagramFocusPanel";
 
@@ -125,6 +126,14 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
   // submits the survey; reset to null on projectKey change AND on the
   // explicit "Regenerate" button (which re-opens the modal).
   const [userGoal, setUserGoal] = useState<string | null>(null);
+  // Gates the survey behind the intro overlay: the survey only opens
+  // once the intro timeline finished AND the scan resolved. Reset
+  // alongside userGoal (projectKey change + Regenerate).
+  const [surveyIntroDone, setSurveyIntroDone] = useState(false);
+  const handleSurveyIntroReady = useCallback(
+    () => setSurveyIntroDone(true),
+    [],
+  );
 
   // Capability scan fires in parallel with the survey opening — by the
   // time the user picks Edit/Reference the picklist is usually ready.
@@ -193,6 +202,7 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
     setSelectedId(null);
     setPromoted({ blocks: [], arrows: [] });
     setUserGoal(null);
+    setSurveyIntroDone(false);
   }, [projectKey]);
 
   /** "Regenerate" FAB handler: clear the goal so the survey re-opens,
@@ -200,6 +210,7 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
    *  the new run starts from a blank slate. */
   const handleRegenerate = useCallback(() => {
     setUserGoal(null);
+    setSurveyIntroDone(false);
     setState({ kind: "idle" });
     setNodes([]);
     setEdges([]);
@@ -871,12 +882,20 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
         {state.kind === "ready" && userGoal !== null && (
           <RegenerateDiagramButton onClick={handleRegenerate} />
         )}
-        {userGoal === null && files.length > 0 && (
-          <IntentSurvey
-            scanState={scanState}
-            onComplete={(goal) => setUserGoal(goal)}
-          />
-        )}
+        {userGoal === null &&
+          files.length > 0 &&
+          (surveyIntroDone &&
+          (scanState.kind === "ready" || scanState.kind === "error") ? (
+            <IntentSurvey
+              scanState={scanState}
+              onComplete={(goal) => setUserGoal(goal)}
+            />
+          ) : (
+            <SurveyPreparingOverlay
+              scanState={scanState}
+              onReady={handleSurveyIntroReady}
+            />
+          ))}
         {editSummary && (
           <EditSummaryToast
             summary={editSummary}

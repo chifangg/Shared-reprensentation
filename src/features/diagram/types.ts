@@ -83,6 +83,8 @@ export type CapabilityCandidate = {
   id: string;
   label: string;
   caption: string;
+  /** Icon keyword chosen by the scan; resolved to a lucide glyph in the UI. */
+  icon: string;
 };
 
 export type CapabilityScanState =
@@ -92,15 +94,6 @@ export type CapabilityScanState =
   | { kind: "error"; message: string };
 
 export type IntentVerb = "understand" | "edit" | "reference" | "other";
-
-export type IntentRole =
-  | "frontend"
-  | "backend"
-  | "fullstack"
-  | "ml"
-  | "security"
-  | "design"
-  | "other";
 
 // ---------------------------------------------------------------------------
 // Visual-edit targets and options (the chat ↔ diagram protocol payloads)

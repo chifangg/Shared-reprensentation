@@ -2,12 +2,12 @@
  * Streaming POST to /api/diagram with view=capability_scan.
  *
  * Lighter than fetchStructureStream: the backend emits only `capability`
- * tool calls (id + label + caption) and a terminal `done`. No arrows,
- * no provenance. Used by the onboarding survey to populate its picklist
- * for Edit / Reference verbs.
+ * tool calls (id + label + caption + icon) and a terminal `done`. No
+ * arrows, no provenance. Used by the onboarding survey to populate the
+ * picklist for both the Understand and Edit / Reference branches.
  *
- * Fires in PARALLEL with the survey modal opening — by the time the
- * user reaches the picklist step, the candidates are usually already in.
+ * The survey is gated behind a loading overlay until this stream
+ * resolves, so the picklist is always populated when the user sees it.
  */
 
 import type { CapabilityCandidate } from "../types";

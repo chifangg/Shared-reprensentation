@@ -69,7 +69,7 @@ VIEW: capability candidates. List 4–8 user-facing capabilities — the things 
 This is a LIGHTWEIGHT pass:\n\
 - NO arrows. Don't reason about relationships between capabilities.\n\
 - NO provenance. Don't list files or function names.\n\
-- Just label + 1-sentence caption per capability.\n\
+- label + 1-sentence caption per capability, plus an `icon` keyword from the allowed list whose meaning best matches the capability (e.g. comparison view -> \"compare\", conversation/chat log -> \"conversation\", annotation/tagging -> \"annotation\", dataset/storage -> \"data\", browse/search -> \"browse\", screens/UI -> \"ui\", processing pipeline -> \"dataflow\"). Spread the icons across the list so the picklist looks varied; use \"other\" only if none genuinely fit.\n\
 - Aim for BREADTH not depth — cover the major user-facing aspects of the project.\n\n\
 Examples (project-type dependent):\n\
 - Portfolio site: \"Content sections\", \"Theming & appearance\", \"Interactions\", \"Layout\".\n\

@@ -56,9 +56,14 @@ fn capability_input_schema() -> serde_json::Value {
         "properties": {
             "id": { "type": "string", "minLength": 1, "description": "Stable readable id derived from the label, e.g. \"content_sections\"." },
             "label": { "type": "string", "minLength": 1, "description": "Short user-facing capability name." },
-            "caption": { "type": "string", "description": "One-sentence description of what this capability does for the user." }
+            "caption": { "type": "string", "description": "One-sentence description of what this capability does for the user." },
+            "icon": {
+                "type": "string",
+                "enum": ["structure", "dataflow", "ui", "logic", "integration", "config", "data", "content", "conversation", "compare", "view", "people", "browse", "annotation", "other"],
+                "description": "One keyword from the list whose meaning best matches this capability. Pick distinct icons across capabilities so the picklist looks varied. Use \"other\" only if none genuinely fit."
+            }
         },
-        "required": ["id", "label", "caption"]
+        "required": ["id", "label", "caption", "icon"]
     })
 }
 

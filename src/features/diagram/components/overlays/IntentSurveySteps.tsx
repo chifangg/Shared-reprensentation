@@ -1,31 +1,33 @@
+import { Check, Loader2 } from "lucide-react";
 import type {
   CapabilityCandidate,
   CapabilityScanState,
-  IntentRole,
   IntentVerb,
 } from "../../types";
+import { capabilityIcon } from "../../util/capabilityIcon";
 
 /**
  * Sub-step panels for the IntentSurvey state machine, plus the
  * goal-string composer. Kept together because all three steps + the
- * composer share the same ROLES const and survey-shape types — splitting
- * each into its own file would scatter the survey vocabulary.
+ * composer share the same survey-shape types — splitting each into its
+ * own file would scatter the survey vocabulary.
+ *
+ * Both Understand and Edit/Reference pick from the SAME capability_scan
+ * candidates (project-specific, not a fixed list). Understand is a clean
+ * multi-select of focus areas; Edit/Reference is a single-select of the
+ * one capability to act on, with a one-line explanation.
  */
 
-export const ROLES: { value: IntentRole; label: string }[] = [
-  { value: "frontend", label: "Frontend" },
-  { value: "backend", label: "Backend" },
-  { value: "fullstack", label: "Fullstack" },
-  { value: "ml", label: "ML / Data" },
-  { value: "security", label: "Security" },
-  { value: "design", label: "Design" },
-  { value: "other", label: "Other" },
-];
+const SECTION_LABEL = "text-[12px] font-semibold text-[#5C544B]";
+const TEXT_FIELD =
+  "w-full rounded-xl border border-[#E7E2DA] bg-white px-3 py-2 text-[13px] text-[#2A2622] transition-colors placeholder:text-[#B6AC9E] hover:border-[#D8CFC2]";
+const CHIP_IDLE =
+  "border border-[#E2DBD0] bg-white text-[#5C544B] hover:-translate-y-px hover:border-[#C9BFB1] hover:bg-[#FCF8F1]";
+const CHIP_SELECTED = "border border-[#C99E84] bg-[#FBF1EB] text-[#8A5A3C]";
 
 export function composeGoal(params: {
   verb: IntentVerb;
-  roles: IntentRole[];
-  roleOtherText: string;
+  understandCaps: CapabilityCandidate[];
   understandText: string;
   capability: CapabilityCandidate | null;
   capFreeText: string;
@@ -33,20 +35,14 @@ export function composeGoal(params: {
 }): string {
   const { verb } = params;
   if (verb === "understand") {
-    const roleLabels = params.roles
-      .map((r) =>
-        r === "other"
-          ? params.roleOtherText.trim() || null
-          : ROLES.find((x) => x.value === r)?.label ?? null,
-      )
-      .filter((s): s is string => !!s);
-    const rolePart = roleLabels.length
-      ? `Role: ${roleLabels.join(", ")}.`
-      : "";
+    const labels = params.understandCaps.map((c) => c.label);
+    const focusPart = labels.length ? `Focus areas: ${labels.join(", ")}.` : "";
     const detailPart = params.understandText.trim()
-      ? `Want to understand: ${params.understandText.trim()}.`
-      : `Want to understand the codebase.`;
-    return [rolePart, detailPart].filter(Boolean).join(" ");
+      ? `Specifically wants to understand: ${params.understandText.trim()}.`
+      : "";
+    return ["Wants to understand this codebase.", focusPart, detailPart]
+      .filter(Boolean)
+      .join(" ");
   }
   if (verb === "edit") {
     const target = params.capability
@@ -63,65 +59,88 @@ export function composeGoal(params: {
   return params.otherText.trim();
 }
 
+function ScanStatus({ scanState }: { scanState: CapabilityScanState }) {
+  if (scanState.kind === "loading" || scanState.kind === "idle") {
+    return (
+      <div className="flex items-center gap-2 rounded-xl border border-dashed border-[#E0D9CF] bg-[#FBF7F0] px-3 py-2.5 text-[12px] text-[#8A8178]">
+        <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
+        Analyzing project…
+      </div>
+    );
+  }
+  if (scanState.kind === "error") {
+    return (
+      <div className="rounded-xl border border-[#E4B9A6] bg-[#FBF1EB] px-3 py-2.5 text-[12px] text-[#9C5638]">
+        Couldn't scan: {scanState.message}. Describe it below instead.
+      </div>
+    );
+  }
+  return null;
+}
+
 export function UnderstandStep({
-  roles,
-  toggleRole,
-  roleOtherText,
-  setRoleOtherText,
+  scanState,
+  understandCaps,
+  toggleUnderstandCap,
   understandText,
   setUnderstandText,
 }: {
-  roles: IntentRole[];
-  toggleRole: (r: IntentRole) => void;
-  roleOtherText: string;
-  setRoleOtherText: (s: string) => void;
+  scanState: CapabilityScanState;
+  understandCaps: CapabilityCandidate[];
+  toggleUnderstandCap: (c: CapabilityCandidate) => void;
   understandText: string;
   setUnderstandText: (s: string) => void;
 }) {
   return (
-    <div className="flex flex-col gap-3">
+    <div className="survey-rise flex flex-col gap-4">
       <div>
-        <div className="mb-1.5 text-[12px] font-semibold text-[#222222]">
-          Your background (pick any that apply)
+        <div className={`mb-2.5 ${SECTION_LABEL}`}>
+          What do you want to see?{" "}
+          <span className="font-normal text-[#A89D8E]">
+            (pick any that apply)
+          </span>
         </div>
-        <div className="flex flex-wrap gap-1.5">
-          {ROLES.map((r) => {
-            const on = roles.includes(r.value);
-            return (
-              <button
-                key={r.value}
-                type="button"
-                onClick={() => toggleRole(r.value)}
-                className={
-                  on
-                    ? "rounded-full border border-[#78716C] bg-[#78716C] px-2.5 py-1 text-[12px] font-medium text-white"
-                    : "rounded-full border border-[#D4D4D4] bg-white px-2.5 py-1 text-[12px] text-[#222222] hover:border-[#78716C]/40 hover:bg-[#F5F5F4]"
-                }
-              >
-                {r.label}
-              </button>
-            );
-          })}
-        </div>
-        {roles.includes("other") && (
-          <input
-            value={roleOtherText}
-            onChange={(e) => setRoleOtherText(e.target.value)}
-            placeholder="Describe your role"
-            className="mt-2 w-full rounded-md border border-[#D4D4D4] bg-white px-2.5 py-1.5 text-[13px] text-[#222222] outline-none focus:border-[#78716C]"
-          />
+        {scanState.kind === "ready" ? (
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            {scanState.candidates.map((c, i) => {
+              const on = understandCaps.some((x) => x.id === c.id);
+              const Icon = capabilityIcon(c.icon, `${c.label} ${c.caption}`);
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => toggleUnderstandCap(c)}
+                  style={{ animationDelay: `${i * 40}ms` }}
+                  className={`survey-rise flex items-center gap-2 rounded-xl px-3 py-2.5 text-left text-[12.5px] transition-all ${
+                    on ? `${CHIP_SELECTED} font-semibold` : `${CHIP_IDLE} font-medium`
+                  }`}
+                >
+                  <Icon
+                    className={`h-4 w-4 shrink-0 ${
+                      on ? "text-[#A66B49]" : "text-[#A89D8E]"
+                    }`}
+                    strokeWidth={2}
+                  />
+                  <span className="leading-snug">{c.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <ScanStatus scanState={scanState} />
         )}
       </div>
       <div>
-        <div className="mb-1.5 text-[12px] font-semibold text-[#222222]">
-          What do you want to understand? (optional)
+        <div className={`mb-2 ${SECTION_LABEL}`}>
+          Anything specific?{" "}
+          <span className="font-normal text-[#A89D8E]">(optional)</span>
         </div>
         <textarea
           value={understandText}
           onChange={(e) => setUnderstandText(e.target.value)}
           placeholder="e.g. how the data flow works end-to-end"
           rows={2}
-          className="w-full resize-none rounded-md border border-[#D4D4D4] bg-white px-2.5 py-1.5 text-[13px] text-[#222222] outline-none focus:border-[#78716C]"
+          className={`resize-none ${TEXT_FIELD}`}
         />
       </div>
     </div>
@@ -142,63 +161,80 @@ export function CapabilityStep({
   setFreeText: (s: string) => void;
 }) {
   return (
-    <div className="flex flex-col gap-3">
+    <div className="survey-rise flex flex-col gap-3.5">
       <div>
-        <div className="mb-1.5 text-[12px] font-semibold text-[#222222]">
-          Pick a capability
-        </div>
-        {scanState.kind === "loading" && (
-          <div className="rounded-md border border-dashed border-[#D4D4D4] bg-[#FAFAFA] px-3 py-2 text-[12px] text-[#666666]">
-            Analyzing project…
+        <div className={`mb-2 ${SECTION_LABEL}`}>Pick a capability</div>
+        {scanState.kind === "ready" ? (
+          <div className="relative">
+            <div className="flex max-h-[256px] flex-col gap-2 overflow-y-auto pb-1.5 pr-1.5">
+              {scanState.candidates.map((c, i) => {
+                const on = capability?.id === c.id;
+                const Icon = capabilityIcon(c.icon, `${c.label} ${c.caption}`);
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => {
+                      setCapability(on ? null : c);
+                      if (!on) setFreeText("");
+                    }}
+                    style={{ animationDelay: `${i * 45}ms` }}
+                    className={`survey-rise flex items-start gap-3 rounded-xl px-3.5 py-3 text-left transition-all ${
+                      on
+                        ? `${CHIP_SELECTED} shadow-[0_6px_16px_-10px_rgba(166,107,73,0.6)]`
+                        : CHIP_IDLE
+                    }`}
+                  >
+                    <Icon
+                      className={`mt-0.5 h-[18px] w-[18px] shrink-0 ${
+                        on ? "text-[#A66B49]" : "text-[#A89D8E]"
+                      }`}
+                      strokeWidth={2}
+                    />
+                    <span className="flex min-w-0 flex-col gap-0.5">
+                      <span className="text-[13.5px] font-semibold text-[#2A2622]">
+                        {c.label}
+                      </span>
+                      <span className="text-[11.5px] leading-snug text-[#8A8178]">
+                        {c.caption}
+                      </span>
+                    </span>
+                    <span
+                      className={
+                        on
+                          ? "ml-auto mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#A66B49] text-white"
+                          : "ml-auto mt-0.5 h-5 w-5 shrink-0 rounded-full border-[1.5px] border-[#DDD5C9]"
+                      }
+                    >
+                      {on && <Check className="h-3 w-3" strokeWidth={3} />}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            {/* Soft fade hinting the list scrolls past the visible edge. */}
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-6 rounded-b-xl bg-gradient-to-t from-[#FCFBF9] to-transparent" />
           </div>
-        )}
-        {scanState.kind === "error" && (
-          <div className="rounded-md border border-[#E48A8A] bg-[#FFF4F4] px-3 py-2 text-[12px] text-[#7A2424]">
-            Couldn't scan: {scanState.message}. Type below instead.
-          </div>
-        )}
-        {scanState.kind === "ready" && (
-          <div className="flex max-h-[200px] flex-col gap-1.5 overflow-y-auto">
-            {scanState.candidates.map((c) => {
-              const on = capability?.id === c.id;
-              return (
-                <button
-                  key={c.id}
-                  type="button"
-                  onClick={() => {
-                    setCapability(on ? null : c);
-                    if (!on) setFreeText("");
-                  }}
-                  className={
-                    on
-                      ? "flex flex-col items-start gap-0.5 rounded-md border border-[#78716C] bg-[#F5F5F4] px-2.5 py-1.5 text-left"
-                      : "flex flex-col items-start gap-0.5 rounded-md border border-[#D4D4D4] bg-white px-2.5 py-1.5 text-left hover:border-[#78716C]/40 hover:bg-[#F5F5F4]"
-                  }
-                >
-                  <span className="text-[13px] font-semibold text-[#222222]">
-                    {c.label}
-                  </span>
-                  <span className="text-[11px] text-[#666666]">{c.caption}</span>
-                </button>
-              );
-            })}
-          </div>
+        ) : (
+          <ScanStatus scanState={scanState} />
         )}
       </div>
-      <div>
-        <div className="mb-1.5 text-[12px] font-semibold text-[#222222]">
-          Or describe in your own words
-        </div>
-        <input
-          value={freeText}
-          onChange={(e) => {
-            setFreeText(e.target.value);
-            if (e.target.value.trim()) setCapability(null);
-          }}
-          placeholder="e.g. add a new publication entry"
-          className="w-full rounded-md border border-[#D4D4D4] bg-white px-2.5 py-1.5 text-[13px] text-[#222222] outline-none focus:border-[#78716C]"
-        />
+      <div className="flex items-center gap-3">
+        <span className="h-px flex-1 bg-[#EDE7DD]" />
+        <span className="text-[10.5px] font-semibold uppercase tracking-wider text-[#B6AC9E]">
+          or
+        </span>
+        <span className="h-px flex-1 bg-[#EDE7DD]" />
       </div>
+      <input
+        value={freeText}
+        onChange={(e) => {
+          setFreeText(e.target.value);
+          if (e.target.value.trim()) setCapability(null);
+        }}
+        placeholder="Describe in your own words — e.g. add a new publication entry"
+        className={TEXT_FIELD}
+      />
     </div>
   );
 }
@@ -217,7 +253,7 @@ export function OtherStep({
       onChange={(e) => setText(e.target.value)}
       placeholder="What do you want to do here? Be as specific as you like."
       rows={4}
-      className="w-full resize-none rounded-md border border-[#D4D4D4] bg-white px-2.5 py-1.5 text-[13px] text-[#222222] outline-none focus:border-[#78716C]"
+      className={`survey-rise resize-none ${TEXT_FIELD}`}
     />
   );
 }

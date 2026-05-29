@@ -353,6 +353,32 @@ button:focus-visible,
   animation: focus-pulse 1.6s ease-in-out infinite;
 }
 
+/* Onboarding survey entrance animations. The card springs up + settles;
+   list items (verb cards, capability rows, pills) rise in with a small
+   per-item delay set inline via `animation-delay` for a staggered feel. */
+@keyframes survey-overlay-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes survey-card-in {
+  from { opacity: 0; transform: translateY(14px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes survey-rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.survey-overlay-in {
+  animation: survey-overlay-in 220ms ease-out both;
+}
+.survey-card-in {
+  animation: survey-card-in 340ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.survey-rise {
+  animation: survey-rise 360ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
 /* Bubble pop animations for the click-block → fan-out-bubbles feature.
  *
  * The translate(--enter-dx, --enter-dy) start positions the bubble AT
