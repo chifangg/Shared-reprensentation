@@ -56,6 +56,14 @@ export function estimateMiniExpandedHeight(b: DiagramBlock): number {
   return Math.max(h + 12, 56);
 }
 
+/** Gaps used when corralling edge-less "island" blocks into a tidy
+ *  band. Kept close to dagre's nodesep/ranksep so the band reads as the
+ *  same grid density rather than a visibly different one. */
+const ISLAND_GAP_X = 40;
+const ISLAND_GAP_Y = 40;
+/** Gap between the bottom of the connected spine and the island band. */
+const ISLAND_BAND_GAP = 90;
+
 export function layoutSchema(
   schema: DiagramSchema,
   selectedId: string | null = null,
@@ -87,42 +95,101 @@ export function layoutSchema(
   });
   g.setDefaultEdgeLabel(() => ({}));
 
+  const blockHeight = (b: DiagramBlock) =>
+    b.id === selectedId ? estimateExpandedHeight(b) : NODE_H;
+
+  // Collect the edges dagre ranks on (parent links + settled arrows).
+  // Pending arrows are skipped — adding an in-flight edge can shuffle
+  // nodes the moment the user pulls a new arrow, jarring the popover
+  // off its midpoint. They still render (see edges loop below).
+  const dagreEdges: Array<[string, string]> = [];
   for (const b of schema.blocks) {
-    const h = b.id === selectedId ? estimateExpandedHeight(b) : NODE_H;
-    g.setNode(b.id, { width: NODE_W, height: h });
-  }
-  for (const b of schema.blocks) {
-    if (b.parent && allBlockIds.has(b.parent)) {
-      g.setEdge(b.parent, b.id);
-    }
+    if (b.parent && allBlockIds.has(b.parent)) dagreEdges.push([b.parent, b.id]);
   }
   for (const a of schema.arrows) {
-    // Skip pending arrows from layout — adding an in-flight edge to
-    // dagre can shuffle nodes around the moment the user pulls a new
-    // arrow, which is jarring when the popover is supposed to land on
-    // a stable midpoint. Pending arrows still render (see edges loop
-    // below); they just don't influence the dagre rank/position pass.
     if (a.pending !== undefined) continue;
     if (allBlockIds.has(a.from) && allBlockIds.has(a.to)) {
-      g.setEdge(a.from, a.to);
+      dagreEdges.push([a.from, a.to]);
     }
   }
+
+  // A block is "connected" if it touches any of those edges. Edge-less
+  // "island" blocks are pulled OUT of the dagre pass: dagre would drop
+  // them at arbitrary ranks, so the canvas read as a flow plus random
+  // floating cards. We corral them into a tidy band under the spine
+  // instead (in emission order), so the reading axis stays intact.
+  const connected = new Set<string>();
+  for (const [from, to] of dagreEdges) {
+    connected.add(from);
+    connected.add(to);
+  }
+
+  for (const b of schema.blocks) {
+    if (!connected.has(b.id)) continue;
+    g.setNode(b.id, { width: NODE_W, height: blockHeight(b) });
+  }
+  for (const [from, to] of dagreEdges) g.setEdge(from, to);
 
   dagre.layout(g);
 
+  // Top-left position per block: connected ones come from dagre; the
+  // island band is computed below.
+  const posMap = new Map<string, { x: number; y: number }>();
+  let spineMinX = Infinity;
+  let spineMaxX = -Infinity;
+  let spineMaxY = -Infinity;
+  for (const b of schema.blocks) {
+    if (!connected.has(b.id)) continue;
+    const node = g.node(b.id);
+    const h = blockHeight(b);
+    const x = node.x - NODE_W / 2;
+    const y = node.y - h / 2;
+    posMap.set(b.id, { x, y });
+    spineMinX = Math.min(spineMinX, x);
+    spineMaxX = Math.max(spineMaxX, x + NODE_W);
+    spineMaxY = Math.max(spineMaxY, y + h);
+  }
+
+  // Pack the islands left-to-right in emission order, wrapping to fit
+  // under the spine's horizontal extent (or a default 4-wide grid when
+  // there's no spine at all, i.e. nothing is connected).
+  const islands = schema.blocks.filter((b) => !connected.has(b.id));
+  if (islands.length > 0) {
+    const colStride = NODE_W + ISLAND_GAP_X;
+    const hasSpine = Number.isFinite(spineMinX);
+    const startX = hasSpine ? spineMinX : 20;
+    const startY = hasSpine ? spineMaxY + ISLAND_BAND_GAP : 20;
+    const bandWidth = hasSpine ? spineMaxX - spineMinX : colStride * 4 - ISLAND_GAP_X;
+    const maxCols = Math.max(1, Math.floor((bandWidth + ISLAND_GAP_X) / colStride));
+
+    let col = 0;
+    let rowY = startY;
+    let rowMaxH = 0;
+    for (const b of islands) {
+      if (col >= maxCols) {
+        col = 0;
+        rowY += rowMaxH + ISLAND_GAP_Y;
+        rowMaxH = 0;
+      }
+      posMap.set(b.id, { x: startX + col * colStride, y: rowY });
+      rowMaxH = Math.max(rowMaxH, blockHeight(b));
+      col++;
+    }
+  }
+
   const nodes: Node<BlockNodeData>[] = schema.blocks.map((b) => {
-    const pos = g.node(b.id);
-    const h = b.id === selectedId ? estimateExpandedHeight(b) : NODE_H;
+    const pos = posMap.get(b.id) ?? { x: 0, y: 0 };
     return {
       id: b.id,
       type: "block",
-      position: { x: pos.x - NODE_W / 2, y: pos.y - h / 2 },
+      position: pos,
       selected: b.id === selectedId,
       data: {
         label: b.label,
         caption: b.caption,
         files: b.provenance?.files ?? [],
         functions: b.provenance?.functions ?? [],
+        category: b.category,
         isContainer: containerIds.has(b.id),
         isFocused: focusedSet.has(b.id),
         isDimmed: hasFocus && !focusedSet.has(b.id),

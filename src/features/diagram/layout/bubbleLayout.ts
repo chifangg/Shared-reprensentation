@@ -10,6 +10,10 @@
  *     clearance for the bubble fan. Avoids the user complaint of
  *     bubbles fanning into neighbouring blocks.
  *
+ *   - `fanSpreadDeg` / `fanRadius` — the count-driven spread + radius
+ *     the fan uses. Shared by `computeFanPositions` (bubble centers)
+ *     and `bubbleNodes` (sector arc) so the two never desync.
+ *
  *   - `computeFanPositions` — given a center, count, fan center angle
  *     and radius, return N evenly-spread radial positions.
  *
@@ -18,11 +22,42 @@
 
 import { NODE_H, NODE_W } from "./constants";
 
-/** Max angular spread of the fan. User-requested ~1/4 arc. */
-const FAN_MAX_SPREAD_DEG = 90;
+/** Soft cap on the fan's angular spread. Past this we widen the radius
+ *  instead of the angle, so a big cluster doesn't wrap back behind the
+ *  block (which would collide with the parent card / the rest of the
+ *  fan). A bit over a half-circle still leaves a clear gap toward the
+ *  parent's back. */
+const FAN_MAX_SPREAD_DEG = 200;
 
-/** Per-bubble angle in the fan (caps once we hit FAN_MAX_SPREAD_DEG). */
-const FAN_PER_BUBBLE_DEG = 25;
+/** Per-bubble angle in the fan, used to size the spread up to the cap.
+ *  Keeps a 2-3 bubble fan from looking unnaturally wide. */
+const FAN_PER_BUBBLE_DEG = 24;
+
+/** Minimum center-to-center arc distance (px) between adjacent bubbles.
+ *  Bubbles are an 80px circle (BUBBLE_HALF_SIZE * 2); this adds a small
+ *  visual gap on top so they never kiss. `fanRadius` grows the radius
+ *  until the chord between neighbours clears this. */
+const MIN_BUBBLE_ARC_SPACING = 92;
+
+/** Total angular spread (deg) for a fan of `count` bubbles. Grows with
+ *  count up to FAN_MAX_SPREAD_DEG. Spread spans (count - 1) gaps. */
+export function fanSpreadDeg(count: number): number {
+  if (count <= 1) return 0;
+  return Math.min(FAN_MAX_SPREAD_DEG, FAN_PER_BUBBLE_DEG * (count - 1));
+}
+
+/** Radial distance to use for a fan of `count` bubbles. Returns the
+ *  base radius unless the (capped) spread would pack the bubbles closer
+ *  than MIN_BUBBLE_ARC_SPACING — in which case it pushes them out far
+ *  enough to clear. This is what keeps a large cluster (the user hit
+ *  ~11 bubbles) from collapsing into an overlapping vertical column:
+ *  once the angle caps, the radius takes over. */
+export function fanRadius(count: number, baseRadius: number): number {
+  if (count <= 1) return baseRadius;
+  const stepRad = ((fanSpreadDeg(count) / (count - 1)) * Math.PI) / 180;
+  const needed = MIN_BUBBLE_ARC_SPACING / (2 * Math.sin(stepRad / 2));
+  return Math.max(baseRadius, needed);
+}
 
 type Side = { centerDeg: number; priority: number; label: string };
 
@@ -100,10 +135,7 @@ export function computeFanPositions(
   radius: number,
 ): Array<{ x: number; y: number }> {
   if (count === 0) return [];
-  const spread =
-    count === 1
-      ? 0
-      : Math.min(FAN_MAX_SPREAD_DEG, FAN_PER_BUBBLE_DEG * count);
+  const spread = fanSpreadDeg(count);
   const startDeg = centerAngleDeg - spread / 2;
   const step = count > 1 ? spread / (count - 1) : 0;
 

@@ -73,6 +73,7 @@ import { EditSummaryToast } from "./overlays/EditSummaryToast";
 import { RegeneratingChip } from "./overlays/RegeneratingChip";
 import { AdaptiveFocusBanner } from "./overlays/AdaptiveFocusBanner";
 import { AddNewBlockButton } from "./overlays/AddNewBlockButton";
+import { CategoryLegend } from "./overlays/CategoryLegend";
 import { IntentSurvey } from "./overlays/IntentSurvey";
 import { SurveyPreparingOverlay } from "./overlays/SurveyPreparingOverlay";
 import { RegenerateDiagramButton } from "./overlays/RegenerateDiagramButton";
@@ -121,6 +122,25 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
     [],
   );
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+
+  // Positions the user has dragged blocks to, keyed by block id. Re-laid
+  // out nodes (e.g. when selection toggles or a bubble cluster opens)
+  // are overridden with these so a manual move survives the relayout
+  // instead of snapping back to dagre's slot. Cleared on project change.
+  const userPositionsRef = useRef<Map<string, { x: number; y: number }>>(
+    new Map(),
+  );
+  const handleNodesChange = useCallback(
+    (changes: Parameters<typeof onNodesChange>[0]) => {
+      for (const c of changes) {
+        if (c.type === "position" && c.position) {
+          userPositionsRef.current.set(c.id, c.position);
+        }
+      }
+      onNodesChange(changes);
+    },
+    [onNodesChange],
+  );
 
   // Onboarding survey: gates the structure fetch. Null until the user
   // submits the survey; reset to null on projectKey change AND on the
@@ -171,12 +191,16 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
   // Click-a-block-to-expand-bubbles state. Bubbles are derived from the
   // block's provenance.functions and rendered as fan-laid ReactFlow
   // nodes; viewport pans/zooms to the cluster and restores on collapse.
-  const { bubbleNodes, toggleBlock: toggleBubbleBlock, clear: clearBubbles } =
-    useBubbleFocus({
-      projectKey,
-      blocks: state.kind === "ready" ? state.schema.blocks : [],
-      nodes,
-    });
+  const {
+    bubbleNodes,
+    borrowOffsets,
+    toggleBlock: toggleBubbleBlock,
+    clear: clearBubbles,
+  } = useBubbleFocus({
+    projectKey,
+    blocks: state.kind === "ready" ? state.schema.blocks : [],
+    nodes,
+  });
 
   // Merge bubble nodes with the layout-computed nodes for the ReactFlow
   // render. Kept derived (not state) so layoutSchema re-runs don't have
@@ -187,13 +211,21 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
   // route through `type: "bubble"` → FunctionBubble (not BlockNode), and
   // are non-selectable / non-draggable, so onNodesChange never touches
   // their data fields. Safe at runtime; types just need the alignment.
-  const renderedNodes = useMemo<Node<BlockNodeData>[]>(
-    () =>
-      bubbleNodes.length === 0
+  const renderedNodes = useMemo<Node<BlockNodeData>[]>(() => {
+    // Apply "borrow" make-way offsets to whichever blocks the open
+    // bubble fan would cover; React Flow's transform transition glides
+    // them aside on expand and back when borrowOffsets empties.
+    const base =
+      borrowOffsets.size === 0
         ? nodes
-        : [...nodes, ...(bubbleNodes as unknown as Node<BlockNodeData>[])],
-    [nodes, bubbleNodes],
-  );
+        : nodes.map((n) => {
+            const moved = borrowOffsets.get(n.id);
+            return moved ? { ...n, position: moved } : n;
+          });
+    return bubbleNodes.length === 0
+      ? base
+      : [...base, ...(bubbleNodes as unknown as Node<BlockNodeData>[])];
+  }, [nodes, bubbleNodes, borrowOffsets]);
 
   // Reset the small in-component state on USER-initiated project
   // change. (FetchState, nodes/edges, focused, regenerating are
@@ -203,6 +235,7 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
     setPromoted({ blocks: [], arrows: [] });
     setUserGoal(null);
     setSurveyIntroDone(false);
+    userPositionsRef.current.clear();
   }, [projectKey]);
 
   /** "Regenerate" FAB handler: clear the goal so the survey re-opens,
@@ -673,17 +706,24 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
 
   const attachInteractive = useCallback(
     (laidNodes: Node<BlockNodeData>[]) => {
-      const result = laidNodes.map((n) => ({
-        ...n,
-        data: {
-          ...n.data,
-          isRecentlyAdded:
-            recentChanges?.blockIds.has(n.id) ?? false,
-          onLabelChange: (newLabel: string) =>
-            handleRenameBlock(n.id, newLabel),
-          onActions: () => handleBlockAction(n.id),
-        },
-      }));
+      const result = laidNodes.map((n) => {
+        const dragged = userPositionsRef.current.get(n.id);
+        return {
+          ...n,
+          // Honor a manual drag over the freshly computed dagre slot so
+          // relayouts (selection toggle, bubble open) don't yank the
+          // block back.
+          position: dragged ?? n.position,
+          data: {
+            ...n.data,
+            isRecentlyAdded:
+              recentChanges?.blockIds.has(n.id) ?? false,
+            onLabelChange: (newLabel: string) =>
+              handleRenameBlock(n.id, newLabel),
+            onActions: () => handleBlockAction(n.id),
+          },
+        };
+      });
       dlog("recent-debug:attachInteractive ran", {
         recentChangesBlockIds: recentChanges
           ? Array.from(recentChanges.blockIds)
@@ -823,7 +863,7 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
         <ReactFlow
           nodes={renderedNodes}
           edges={edges}
-          onNodesChange={onNodesChange}
+          onNodesChange={handleNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={handleAddConnection}
           onNodeClick={onNodeClick}
@@ -900,6 +940,17 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
           <EditSummaryToast
             summary={editSummary}
             onDismiss={() => setEditSummary(null)}
+          />
+        )}
+        {state.kind === "ready" && view === "overview" && (
+          <CategoryLegend
+            present={
+              new Set(
+                state.schema.blocks
+                  .map((b) => b.category)
+                  .filter((c): c is NonNullable<typeof c> => !!c),
+              )
+            }
           />
         )}
       </div>

@@ -21,6 +21,11 @@ fn block_input_schema() -> serde_json::Value {
             "label": { "type": "string", "minLength": 1, "description": "Short display name." },
             "caption": { "type": "string", "description": "One-sentence description of what the block does." },
             "parent": { "type": ["string", "null"], "description": "Parent block id, or null for top-level blocks." },
+            "category": {
+                "type": "string",
+                "enum": ["interface", "logic", "data", "state", "integration", "config"],
+                "description": "Exactly one category for this block. interface = entry surfaces the user or other systems reach: UI screens/panels, API endpoints, CLI commands. logic = processing, engines, rules, pipelines, business logic. data = stored data: datasets, models, schemas, persistence, files. state = runtime app state: stores, session, in-memory caches, context. integration = external services this project calls out to, network clients, third-party glue. config = setup, theming, build, infra, environment, tooling. Pick the single best fit."
+            },
             "provenance": {
                 "type": "object",
                 "properties": {
@@ -30,7 +35,7 @@ fn block_input_schema() -> serde_json::Value {
                 "required": ["files", "functions"]
             }
         },
-        "required": ["id", "label", "caption", "provenance"]
+        "required": ["id", "label", "caption", "category", "provenance"]
     })
 }
 

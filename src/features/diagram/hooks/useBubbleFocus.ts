@@ -45,6 +45,10 @@ export function useBubbleFocus({
 }): {
   expandedBlockId: string | null;
   bubbleNodes: Node[];
+  /** While a cluster is expanded, the new top-left positions neighbour
+   *  blocks should animate to so the fan doesn't cover them. Empty while
+   *  collapsed or exiting (blocks animate back to their layout spots). */
+  borrowOffsets: Map<string, { x: number; y: number }>;
   toggleBlock: (id: string) => void;
   clear: () => void;
 } {
@@ -72,12 +76,16 @@ export function useBubbleFocus({
     return () => window.clearTimeout(t);
   }, [expandedBlockId, activeBlockId]);
 
-  const bubbleNodes = useMemo<Node[]>(() => {
-    if (activeBlockId === null) return [];
+  const { bubbleNodes, borrowOffsets } = useMemo<{
+    bubbleNodes: Node[];
+    borrowOffsets: Map<string, { x: number; y: number }>;
+  }>(() => {
+    const empty = { bubbleNodes: [], borrowOffsets: new Map() };
+    if (activeBlockId === null) return empty;
     const block = blocks.find((b) => b.id === activeBlockId);
-    if (!block) return [];
+    if (!block) return empty;
     const blockNode = nodes.find((n) => n.id === activeBlockId);
-    if (!blockNode) return [];
+    if (!blockNode) return empty;
     const otherBlocks = nodes
       .filter(
         (n) =>
@@ -85,14 +93,21 @@ export function useBubbleFocus({
           n.type !== "bubble" &&
           n.type !== "bubbleSector",
       )
-      .map((n) => ({ x: n.position.x, y: n.position.y }));
-    return buildBubbleAndSectorNodes({
+      .map((n) => ({ id: n.id, x: n.position.x, y: n.position.y }));
+    const isExiting = expandedBlockId === null;
+    const built = buildBubbleAndSectorNodes({
       activeBlockId,
       block,
       blockPosition: blockNode.position,
       otherBlocks,
-      isExiting: expandedBlockId === null,
+      isExiting,
     });
+    // Drop the make-way offsets the moment a collapse starts so blocks
+    // glide back to their layout spots while the bubbles shrink out.
+    return {
+      bubbleNodes: built.nodes,
+      borrowOffsets: isExiting ? new Map() : built.borrow,
+    };
   }, [activeBlockId, expandedBlockId, blocks, nodes]);
 
   // Pan/zoom into the cluster on expand; restore previous viewport on
@@ -130,5 +145,5 @@ export function useBubbleFocus({
 
   const clear = () => setExpandedBlockId(null);
 
-  return { expandedBlockId, bubbleNodes, toggleBlock, clear };
+  return { expandedBlockId, bubbleNodes, borrowOffsets, toggleBlock, clear };
 }

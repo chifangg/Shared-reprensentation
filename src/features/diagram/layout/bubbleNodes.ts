@@ -5,7 +5,12 @@ import type {
   DiagramBlock,
 } from "../types";
 import { NODE_H, NODE_W } from "./constants";
-import { computeFanPositions, pickFanCenterAngle } from "./bubbleLayout";
+import {
+  computeFanPositions,
+  fanRadius,
+  fanSpreadDeg,
+  pickFanCenterAngle,
+} from "./bubbleLayout";
 import { humanizeFunctionName } from "../util/humanize";
 
 /**
@@ -45,22 +50,75 @@ const SECTOR_OUTER_PAD = 20;
  *  at the bubbles. */
 const SECTOR_ANGLE_PAD_DEG = 12;
 
+/** Extra angular slack (deg) past the sector arc when deciding whether a
+ *  neighbour block is "in the way" of the fan, so a block grazing the
+ *  edge still gets nudged rather than half-covered. */
+const BORROW_ARC_MARGIN_DEG = 16;
+
+/** Gap (px) left between the sector's outer edge and a borrowed block's
+ *  center after it's pushed out, so the block clears the cluster with
+ *  visible breathing room. */
+const BORROW_GAP = 28;
+
+/**
+ * For each neighbour block sitting inside the bubble fan's sector,
+ * compute the top-left position it should move to so the fan doesn't
+ * cover it ("borrow" / make-way). Blocks outside the sector are absent
+ * from the map (left where they are). The caller animates blocks to
+ * these positions on expand and back to their layout positions on
+ * collapse.
+ */
+function computeBorrowOffsets(args: {
+  cx: number;
+  cy: number;
+  centerAngleDeg: number;
+  sectorHalfArc: number;
+  sectorOuterR: number;
+  otherBlocks: Array<{ id: string; x: number; y: number }>;
+}): Map<string, { x: number; y: number }> {
+  const { cx, cy, centerAngleDeg, sectorHalfArc, sectorOuterR, otherBlocks } =
+    args;
+  const offsets = new Map<string, { x: number; y: number }>();
+  const clearDist = sectorOuterR + NODE_W / 2 + BORROW_GAP;
+  for (const b of otherBlocks) {
+    const bcx = b.x + NODE_W / 2;
+    const bcy = b.y + NODE_H / 2;
+    const dx = bcx - cx;
+    const dy = bcy - cy;
+    const dist = Math.hypot(dx, dy);
+    if (dist === 0 || dist >= clearDist) continue;
+    const ang = (Math.atan2(dy, dx) * 180) / Math.PI;
+    // Signed angular distance to the fan center, normalized to [-180,180].
+    const da = ((ang - centerAngleDeg + 540) % 360) - 180;
+    if (Math.abs(da) > sectorHalfArc + BORROW_ARC_MARGIN_DEG) continue;
+    // Push the block straight out along its own bearing until it clears.
+    const ux = dx / dist;
+    const uy = dy / dist;
+    offsets.set(b.id, {
+      x: cx + ux * clearDist - NODE_W / 2,
+      y: cy + uy * clearDist - NODE_H / 2,
+    });
+  }
+  return offsets;
+}
+
 export function buildBubbleAndSectorNodes(args: {
   activeBlockId: string;
   block: DiagramBlock;
   blockPosition: { x: number; y: number };
-  otherBlocks: Array<{ x: number; y: number }>;
+  otherBlocks: Array<{ id: string; x: number; y: number }>;
   isExiting: boolean;
-}): Node[] {
+}): { nodes: Node[]; borrow: Map<string, { x: number; y: number }> } {
   const { activeBlockId, block, blockPosition, otherBlocks, isExiting } = args;
   const fns = block.provenance?.functions ?? [];
-  if (fns.length === 0) return [];
+  if (fns.length === 0) return { nodes: [], borrow: new Map() };
 
   const cx = blockPosition.x + NODE_W / 2;
   const cy = blockPosition.y + NODE_H / 2;
 
   const centerAngleDeg = pickFanCenterAngle(cx, cy, otherBlocks);
-  const radius = fns.length === 1 ? RADIUS_SINGLE : RADIUS_MULTI;
+  const baseRadius = fns.length === 1 ? RADIUS_SINGLE : RADIUS_MULTI;
+  const radius = fanRadius(fns.length, baseRadius);
   const positions = computeFanPositions(
     cx,
     cy,
@@ -70,8 +128,7 @@ export function buildBubbleAndSectorNodes(args: {
   );
 
   const sectorOuterR = radius + BUBBLE_HALF_SIZE + SECTOR_OUTER_PAD;
-  const fanSpread =
-    fns.length === 1 ? 0 : Math.min(90, 25 * fns.length);
+  const fanSpread = fanSpreadDeg(fns.length);
   const sectorHalfArc =
     fns.length === 1
       ? SECTOR_ANGLE_PAD_DEG
@@ -123,5 +180,14 @@ export function buildBubbleAndSectorNodes(args: {
     };
   });
 
-  return [sectorNode, ...bubbles];
+  const borrow = computeBorrowOffsets({
+    cx,
+    cy,
+    centerAngleDeg,
+    sectorHalfArc,
+    sectorOuterR,
+    otherBlocks,
+  });
+
+  return { nodes: [sectorNode, ...bubbles], borrow };
 }

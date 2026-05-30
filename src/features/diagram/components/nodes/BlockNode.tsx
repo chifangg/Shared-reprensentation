@@ -3,6 +3,7 @@ import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 import { MoreHorizontal } from "lucide-react";
 import type { BlockNodeData } from "../../types";
 import { NODE_H, NODE_W } from "../../layout/constants";
+import { categoryStyle } from "../../util/blockCategory";
 
 /**
  * Custom React Flow node renderer for a diagram block.
@@ -62,10 +63,26 @@ export function BlockNode({ data, selected }: NodeProps<Node<BlockNodeData>>) {
   const dim = data.isDimmed
     ? "opacity-30 saturate-50 transition-opacity duration-300"
     : "opacity-100 transition-opacity duration-300";
+  // Category color-coding applies only to ordinary blocks. Pending
+  // placeholders and container frames keep their own distinct framing so
+  // the tint doesn't muddy those states. Inline style so it overrides
+  // the base `bg-white` + neutral border classes; the accent rides on
+  // the left edge as a chunking cue.
+  const cat =
+    !data.isPending && !data.isContainer
+      ? categoryStyle(data.category)
+      : null;
+  const catStyle = cat
+    ? {
+        backgroundColor: cat.tint,
+        borderColor: cat.accent,
+        borderLeftWidth: 4,
+      }
+    : undefined;
   return (
     <div
       className={`block-node-grow group/block relative rounded-lg border bg-white px-3 py-2 transition-all ${borderColor} ${ring} ${dim}`}
-      style={{ width: NODE_W, minHeight: NODE_H }}
+      style={{ width: NODE_W, minHeight: NODE_H, ...catStyle }}
     >
       {/* Per-block action affordance ("⋯") — appears at top-right on
        *  block hover, opens the cards overlay so the user can pick a

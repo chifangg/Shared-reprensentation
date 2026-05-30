@@ -41,6 +41,15 @@ cd backend && cargo run --bin claude-ui-app   # backend on :8080
 Vite proxies `/api/*` + `/ws/*` to the backend, so dev mode works
 end-to-end without a separate build.
 
+## Style conventions
+
+- **Avoid em-dashes.** Do not use em-dashes (or en-dashes used as
+  em-dashes) in anything you author: code comments, doc strings,
+  prompt text, and especially user-facing UI copy. Rewrite with a
+  period, comma, colon, or parentheses instead. This applies to new
+  lines you write; leave pre-existing em-dashes alone unless you are
+  already editing that line for another reason.
+
 ## How to verify a change
 
 There's no automated test suite. Use the manual smoke checklist:

@@ -33,11 +33,25 @@ export type DiagramSchema = {
   arrows: DiagramArrow[];
 };
 
+/** Closed taxonomy the model assigns each block. Drives the canvas
+ *  color-coding + legend (see util/blockCategory.ts). Optional because
+ *  older cached schemas / detail blocks may omit it. */
+export type BlockCategory =
+  | "interface"
+  | "logic"
+  | "data"
+  | "state"
+  | "integration"
+  | "config";
+
 export type DiagramBlock = {
   id: string;
   label: string;
   caption: string;
   parent: string | null;
+  /** Model-assigned category for color-coding. May be absent on detail
+   *  blocks or schemas generated before categories existed. */
+  category?: BlockCategory;
   provenance: { files: string[]; functions: string[] };
   /** Local-only marker for blocks the user just asked to create. Renders
    *  with a dashed blue border + marching-ants so it's obvious "this
@@ -166,6 +180,9 @@ export type BlockNodeData = {
   caption: string;
   files: string[];
   functions: string[];
+  /** Model-assigned category for color-coding. Undefined falls back to
+   *  the neutral card style. */
+  category?: BlockCategory;
   isContainer: boolean;
   isFocused: boolean;
   isDimmed: boolean;

@@ -14,7 +14,7 @@ export function DiagramLoadingCard({ startedAt }: { startedAt: number }) {
         <span className="font-medium">Claude is drawing the diagram…</span>
       </div>
       <div className="flex w-full items-center justify-between text-xs text-[#484848]/70">
-        <span>Reading project — first block usually in 5 seconds</span>
+        <span>Reading project...</span>
         <ElapsedClock startedAt={startedAt} />
       </div>
       <div className="h-1 w-full overflow-hidden rounded-full bg-[#EAEAEA]">
