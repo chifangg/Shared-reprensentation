@@ -9,8 +9,10 @@
 //!   - `handler`  — the `generate_diagram` HTTP handler itself plus the
 //!                  body/builder helpers it dispatches into.
 
+mod function_detail;
 mod handler;
 mod prompts;
 mod tools;
 
+pub use function_detail::function_detail;
 pub use handler::generate_diagram;

@@ -74,6 +74,8 @@ import { RegeneratingChip } from "./overlays/RegeneratingChip";
 import { AdaptiveFocusBanner } from "./overlays/AdaptiveFocusBanner";
 import { AddNewBlockButton } from "./overlays/AddNewBlockButton";
 import { CategoryLegend } from "./overlays/CategoryLegend";
+import { BubbleEditOverlays } from "./overlays/BubbleEditOverlays";
+import { useBubbleEditOverlays } from "../hooks/useBubbleEditOverlays";
 import { IntentSurvey } from "./overlays/IntentSurvey";
 import { SurveyPreparingOverlay } from "./overlays/SurveyPreparingOverlay";
 import { RegenerateDiagramButton } from "./overlays/RegenerateDiagramButton";
@@ -115,6 +117,10 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
   const [intentGate, setIntentGate] = useState<{
     target: EditTarget;
   } | null>(null);
+  // Bubble drill-in editors (per-function detail card + per-surface
+  // appearance card). State, click-routing, and reset live in the hook;
+  // this component only owns the code-write dispatch on confirm.
+  const bubbleEdit = useBubbleEditOverlays(projectKey);
   // Snapshot of the schema captured just before each auto-regen so
   // useRecentChanges can diff and glow whatever Claude added.
   const preRegenSnapshotRef = useRef<PreRegenSnapshot | null>(null);
@@ -267,15 +273,19 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
   }, []);
 
   const onNodeClick = useCallback(
-    (_: React.MouseEvent, node: Node) => {
+    (evt: React.MouseEvent, node: Node) => {
       dismissRecentEdit();
-      // Ignore clicks on bubbles themselves — they're visual-only for
-      // now. The parent block (or pane click) collapses them.
-      if (node.type === "bubble") return;
+      // Clicking a function bubble opens the drill-in edit card. The
+      // bubble carries its raw + humanized label and its parent block id
+      // (BubbleNodeData); we anchor the card at the click point.
+      if (node.type === "bubble") {
+        bubbleEdit.openFromBubble(node, evt);
+        return;
+      }
       setSelectedId((prev) => (prev === node.id ? null : node.id));
       toggleBubbleBlock(node.id);
     },
-    [dismissRecentEdit, toggleBubbleBlock],
+    [dismissRecentEdit, toggleBubbleBlock, bubbleEdit],
   );
 
   /**
@@ -951,6 +961,25 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
                   .filter((c): c is NonNullable<typeof c> => !!c),
               )
             }
+          />
+        )}
+        {state.kind === "ready" && (
+          <BubbleEditOverlays
+            blocks={state.schema.blocks}
+            files={files}
+            detail={bubbleEdit.detail}
+            appearance={bubbleEdit.appearance}
+            onCloseDetail={bubbleEdit.closeDetail}
+            onCloseAppearance={bubbleEdit.closeAppearance}
+            onConfirmDetail={(blockId, instruction) => {
+              dispatchExecuteDirect({ kind: "block", id: blockId }, instruction);
+              bubbleEdit.closeDetail();
+              clearBubbles();
+            }}
+            onConfirmAppearance={(blockId, instruction) => {
+              dispatchExecuteDirect({ kind: "block", id: blockId }, instruction);
+              bubbleEdit.closeAppearance();
+            }}
           />
         )}
       </div>

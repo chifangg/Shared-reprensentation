@@ -202,6 +202,11 @@ export type BlockNodeData = {
 };
 
 export type BubbleNodeData = {
+  /** What this bubble drills into. "function" is a provenance function
+   *  (opens the capability detail card). "appearance" is the synthetic
+   *  restyle bubble added to interface surfaces (opens the appearance
+   *  editor). Absent is treated as "function" for back-compat. */
+  kind?: "function" | "appearance";
   /** Raw function/method identifier from provenance.functions. Kept
    *  alongside displayLabel so future edit-flow can match against the
    *  literal name in source. Browser tooltip on the bubble. */

@@ -163,6 +163,13 @@ pub async fn create_web_server(
             "/api/diagram",
             axum::routing::post(crate::diagram::generate_diagram),
         )
+        // Read-only plain-language detail + change preview for a single
+        // function (the bubble drill-in edit flow). One-shot JSON, not
+        // streamed.
+        .route(
+            "/api/function-detail",
+            axum::routing::post(crate::diagram::function_detail),
+        )
         // Internal: called by the tool-bridge subprocess via loopback only.
         // Protected by the per-spawn X-Tool-Bridge-Secret header.
         .route(
