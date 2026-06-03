@@ -109,6 +109,19 @@ export type CapabilityScanState =
 
 export type IntentVerb = "understand" | "edit" | "reference" | "other";
 
+/** The structured onboarding answer. Retained (not just the composed goal
+ *  string) so the canvas can show the user what they chose and let them
+ *  revise it without re-answering from scratch. composeGoal turns this
+ *  into the `<user_goal>` string fed to the backend. */
+export type IntentSelection = {
+  verb: IntentVerb;
+  understandCaps: CapabilityCandidate[];
+  understandText: string;
+  capabilities: CapabilityCandidate[];
+  capFreeText: string;
+  otherText: string;
+};
+
 // ---------------------------------------------------------------------------
 // Visual-edit targets and options (the chat ↔ diagram protocol payloads)
 // ---------------------------------------------------------------------------
@@ -202,11 +215,6 @@ export type BlockNodeData = {
 };
 
 export type BubbleNodeData = {
-  /** What this bubble drills into. "function" is a provenance function
-   *  (opens the capability detail card). "appearance" is the synthetic
-   *  restyle bubble added to interface surfaces (opens the appearance
-   *  editor). Absent is treated as "function" for back-compat. */
-  kind?: "function" | "appearance";
   /** Raw function/method identifier from provenance.functions. Kept
    *  alongside displayLabel so future edit-flow can match against the
    *  literal name in source. Browser tooltip on the bubble. */

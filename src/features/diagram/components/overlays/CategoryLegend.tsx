@@ -14,9 +14,10 @@ import { BLOCK_CATEGORIES, CATEGORY_ORDER } from "../../util/blockCategory";
  * taxonomy without leaving the canvas.
  *
  * Matches the warm card chrome the rest of the overlays use (cream
- * surface, hairline border) and uses each category's accent as the
- * swatch border + tint as the swatch fill so the legend reads as the
- * same family as the blocks it explains.
+ * surface, hairline border). The swatch is a solid fill of the
+ * category's accent (the darker edge color the blocks carry on their
+ * left border), so the legend dot reads as the same color cue the user
+ * scans for on the blocks.
  */
 export function CategoryLegend({ present }: { present: Set<BlockCategory> }) {
   const [expanded, setExpanded] = useState(false);
@@ -43,12 +44,12 @@ export function CategoryLegend({ present }: { present: Set<BlockCategory> }) {
       </button>
       <div className="flex flex-col gap-1.5">
         {items.map((c) => {
-          const { label, tint, accent, blurb } = BLOCK_CATEGORIES[c];
+          const { label, accent, blurb } = BLOCK_CATEGORIES[c];
           return (
             <div key={c} className="flex items-start gap-2">
               <span
-                className="mt-0.5 h-3 w-3 shrink-0 rounded-sm border"
-                style={{ backgroundColor: tint, borderColor: accent }}
+                className="mt-0.5 h-3 w-3 shrink-0 rounded-sm"
+                style={{ backgroundColor: accent }}
               />
               <div className="flex flex-col gap-0.5">
                 <span className="text-[11px] leading-none text-[#2A2622]">

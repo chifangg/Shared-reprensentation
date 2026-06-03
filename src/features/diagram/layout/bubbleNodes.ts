@@ -60,46 +60,6 @@ const BORROW_ARC_MARGIN_DEG = 16;
  *  visible breathing room. */
 const BORROW_GAP = 28;
 
-/** Synthetic label for the appearance bubble. Not a real function; the
- *  click handler branches on `kind === "appearance"`, not this string. */
-const APPEARANCE_LABEL = "__appearance__";
-
-/**
- * Whether a block gets an appearance bubble. Only interface surfaces
- * have a "look" worth restyling; logic / data / integration / config
- * blocks (and backend-only projects, which have no interface blocks at
- * all) get no appearance bubble, so the affordance appears exactly where
- * it makes sense and nowhere else.
- */
-export function blockHasAppearance(block: DiagramBlock): boolean {
-  return block.category === "interface";
-}
-
-type BubbleItem = {
-  label: string;
-  displayLabel: string;
-  kind: "function" | "appearance";
-};
-
-/** The ordered bubble items for a block: its functions, then (for
- *  interface surfaces) a trailing appearance bubble. */
-export function bubbleItemsForBlock(block: DiagramBlock): BubbleItem[] {
-  const fns = block.provenance?.functions ?? [];
-  const items: BubbleItem[] = fns.map((fn) => ({
-    label: fn,
-    displayLabel: humanizeFunctionName(fn),
-    kind: "function",
-  }));
-  if (blockHasAppearance(block)) {
-    items.push({
-      label: APPEARANCE_LABEL,
-      displayLabel: "Appearance",
-      kind: "appearance",
-    });
-  }
-  return items;
-}
-
 /**
  * For each neighbour block sitting inside the bubble fan's sector,
  * compute the top-left position it should move to so the fan doesn't
@@ -150,27 +110,27 @@ export function buildBubbleAndSectorNodes(args: {
   isExiting: boolean;
 }): { nodes: Node[]; borrow: Map<string, { x: number; y: number }> } {
   const { activeBlockId, block, blockPosition, otherBlocks, isExiting } = args;
-  const items = bubbleItemsForBlock(block);
-  if (items.length === 0) return { nodes: [], borrow: new Map() };
+  const fns = block.provenance?.functions ?? [];
+  if (fns.length === 0) return { nodes: [], borrow: new Map() };
 
   const cx = blockPosition.x + NODE_W / 2;
   const cy = blockPosition.y + NODE_H / 2;
 
   const centerAngleDeg = pickFanCenterAngle(cx, cy, otherBlocks);
-  const baseRadius = items.length === 1 ? RADIUS_SINGLE : RADIUS_MULTI;
-  const radius = fanRadius(items.length, baseRadius);
+  const baseRadius = fns.length === 1 ? RADIUS_SINGLE : RADIUS_MULTI;
+  const radius = fanRadius(fns.length, baseRadius);
   const positions = computeFanPositions(
     cx,
     cy,
-    items.length,
+    fns.length,
     centerAngleDeg,
     radius,
   );
 
   const sectorOuterR = radius + BUBBLE_HALF_SIZE + SECTOR_OUTER_PAD;
-  const fanSpread = fanSpreadDeg(items.length);
+  const fanSpread = fanSpreadDeg(fns.length);
   const sectorHalfArc =
-    items.length === 1
+    fns.length === 1
       ? SECTOR_ANGLE_PAD_DEG
       : fanSpread / 2 + SECTOR_ANGLE_PAD_DEG;
   const sectorNode: Node<BubbleSectorNodeData> = {
@@ -192,7 +152,7 @@ export function buildBubbleAndSectorNodes(args: {
     zIndex: -1,
   };
 
-  const bubbles: Node<BubbleNodeData>[] = items.map((item, i) => {
+  const bubbles: Node<BubbleNodeData>[] = fns.map((fn, i) => {
     const posX = positions[i].x - BUBBLE_HALF_SIZE;
     const posY = positions[i].y - BUBBLE_HALF_SIZE;
     // Offset from bubble center to block center: the radial-outward
@@ -205,9 +165,8 @@ export function buildBubbleAndSectorNodes(args: {
       type: "bubble",
       position: { x: posX, y: posY },
       data: {
-        kind: item.kind,
-        label: item.label,
-        displayLabel: item.displayLabel,
+        label: fn,
+        displayLabel: humanizeFunctionName(fn),
         parentBlockId: activeBlockId,
         isExiting,
         enterDx: cx - bubbleCenterX,

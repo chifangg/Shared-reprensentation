@@ -2,7 +2,7 @@ import { Check, Loader2 } from "lucide-react";
 import type {
   CapabilityCandidate,
   CapabilityScanState,
-  IntentVerb,
+  IntentSelection,
 } from "../../types";
 import { capabilityIcon } from "../../util/capabilityIcon";
 
@@ -13,9 +13,9 @@ import { capabilityIcon } from "../../util/capabilityIcon";
  * own file would scatter the survey vocabulary.
  *
  * Both Understand and Edit/Reference pick from the SAME capability_scan
- * candidates (project-specific, not a fixed list). Understand is a clean
- * multi-select of focus areas; Edit/Reference is a single-select of the
- * one capability to act on, with a one-line explanation.
+ * candidates (project-specific, not a fixed list), and both are
+ * multi-select: the user can pick any number of capabilities to focus,
+ * edit, or reference, or describe it in their own words instead.
  */
 
 const SECTION_LABEL = "text-[12px] font-semibold text-[#5C544B]";
@@ -25,14 +25,7 @@ const CHIP_IDLE =
   "border border-[#E2DBD0] bg-white text-[#5C544B] hover:-translate-y-px hover:border-[#C9BFB1] hover:bg-[#FCF8F1]";
 const CHIP_SELECTED = "border border-[#C99E84] bg-[#FBF1EB] text-[#8A5A3C]";
 
-export function composeGoal(params: {
-  verb: IntentVerb;
-  understandCaps: CapabilityCandidate[];
-  understandText: string;
-  capability: CapabilityCandidate | null;
-  capFreeText: string;
-  otherText: string;
-}): string {
+export function composeGoal(params: IntentSelection): string {
   const { verb } = params;
   if (verb === "understand") {
     const labels = params.understandCaps.map((c) => c.label);
@@ -44,19 +37,32 @@ export function composeGoal(params: {
       .filter(Boolean)
       .join(" ");
   }
-  if (verb === "edit") {
-    const target = params.capability
-      ? params.capability.label
+  if (verb === "edit" || verb === "reference") {
+    const target = params.capabilities.length
+      ? params.capabilities.map((c) => c.label).join(", ")
       : params.capFreeText.trim();
-    return `Want to edit: ${target}.`;
-  }
-  if (verb === "reference") {
-    const target = params.capability
-      ? params.capability.label
-      : params.capFreeText.trim();
-    return `Looking for a reference of: ${target}.`;
+    return verb === "edit"
+      ? `Want to edit: ${target}.`
+      : `Looking for a reference of: ${target}.`;
   }
   return params.otherText.trim();
+}
+
+/** Short, human-readable "what you picked" line for the intent chip. Just
+ *  the targets (the verb is shown separately as a label/icon). */
+export function intentSummary(s: IntentSelection): string {
+  if (s.verb === "understand") {
+    if (s.understandCaps.length)
+      return s.understandCaps.map((c) => c.label).join(", ");
+    if (s.understandText.trim()) return s.understandText.trim();
+    return "the whole codebase";
+  }
+  if (s.verb === "edit" || s.verb === "reference") {
+    if (s.capabilities.length)
+      return s.capabilities.map((c) => c.label).join(", ");
+    return s.capFreeText.trim();
+  }
+  return s.otherText.trim();
 }
 
 function ScanStatus({ scanState }: { scanState: CapabilityScanState }) {
@@ -149,33 +155,40 @@ export function UnderstandStep({
 
 export function CapabilityStep({
   scanState,
-  capability,
-  setCapability,
+  capabilities,
+  toggleCapability,
+  clearCapabilities,
   freeText,
   setFreeText,
 }: {
   scanState: CapabilityScanState;
-  capability: CapabilityCandidate | null;
-  setCapability: (c: CapabilityCandidate | null) => void;
+  capabilities: CapabilityCandidate[];
+  toggleCapability: (c: CapabilityCandidate) => void;
+  clearCapabilities: () => void;
   freeText: string;
   setFreeText: (s: string) => void;
 }) {
   return (
     <div className="survey-rise flex flex-col gap-3.5">
       <div>
-        <div className={`mb-2 ${SECTION_LABEL}`}>Pick a capability</div>
+        <div className={`mb-2 ${SECTION_LABEL}`}>
+          Pick capabilities{" "}
+          <span className="font-normal text-[#A89D8E]">
+            (pick any that apply)
+          </span>
+        </div>
         {scanState.kind === "ready" ? (
           <div className="relative">
             <div className="flex max-h-[256px] flex-col gap-2 overflow-y-auto pb-1.5 pr-1.5">
               {scanState.candidates.map((c, i) => {
-                const on = capability?.id === c.id;
+                const on = capabilities.some((x) => x.id === c.id);
                 const Icon = capabilityIcon(c.icon, `${c.label} ${c.caption}`);
                 return (
                   <button
                     key={c.id}
                     type="button"
                     onClick={() => {
-                      setCapability(on ? null : c);
+                      toggleCapability(c);
                       if (!on) setFreeText("");
                     }}
                     style={{ animationDelay: `${i * 45}ms` }}
@@ -230,9 +243,9 @@ export function CapabilityStep({
         value={freeText}
         onChange={(e) => {
           setFreeText(e.target.value);
-          if (e.target.value.trim()) setCapability(null);
+          if (e.target.value.trim()) clearCapabilities();
         }}
-        placeholder="Describe in your own words — e.g. add a new publication entry"
+        placeholder="Describe in your own words, e.g. add a new publication entry"
         className={TEXT_FIELD}
       />
     </div>

@@ -1,9 +1,10 @@
-import { BookOpen, Copy, MessageCircle, PenLine } from "lucide-react";
+import { BookOpen, Copy, MessageCircle, PenLine, X } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useState } from "react";
 import type {
   CapabilityCandidate,
   CapabilityScanState,
+  IntentSelection,
   IntentVerb,
 } from "../../types";
 import {
@@ -20,8 +21,8 @@ import {
  *   1. Verb — Understand / Edit / Reference / Other
  *   2. Branched follow-up:
  *      - Understand → role multi-select + optional detail text
- *      - Edit / Reference → pick a capability candidate (from the
- *        parallel capability_scan) OR free text
+ *      - Edit / Reference → pick one or more capability candidates
+ *        (from the parallel capability_scan) OR free text
  *      - Other → free text
  *
  * The composed goal string flows into buildProjectContext as `<user_goal>`,
@@ -42,7 +43,7 @@ type VerbSpec = {
   accent: string;
 };
 
-const VERBS: VerbSpec[] = [
+export const VERBS: VerbSpec[] = [
   {
     value: "understand",
     label: "Understand",
@@ -80,23 +81,45 @@ const VERBS: VerbSpec[] = [
 export function IntentSurvey({
   scanState,
   onComplete,
+  initialSelection,
+  onCancel,
 }: {
   scanState: CapabilityScanState;
-  onComplete: (goal: string) => void;
+  onComplete: (goal: string, selection: IntentSelection) => void;
+  /** Pre-fill the survey when revising an existing intent (vs first-time
+   *  onboarding, where everything starts empty). */
+  initialSelection?: IntentSelection;
+  /** When provided, the survey is dismissable (revise mode): backdrop
+   *  click or the X closes it without changing anything. Absent during
+   *  first-time onboarding, which must be answered. */
+  onCancel?: () => void;
 }) {
-  const [verb, setVerb] = useState<IntentVerb | null>(null);
+  const [verb, setVerb] = useState<IntentVerb | null>(
+    initialSelection?.verb ?? null,
+  );
   const [understandCaps, setUnderstandCaps] = useState<CapabilityCandidate[]>(
-    [],
+    initialSelection?.understandCaps ?? [],
   );
-  const [understandText, setUnderstandText] = useState("");
-  const [capability, setCapability] = useState<CapabilityCandidate | null>(
-    null,
+  const [understandText, setUnderstandText] = useState(
+    initialSelection?.understandText ?? "",
   );
-  const [capFreeText, setCapFreeText] = useState("");
-  const [otherText, setOtherText] = useState("");
+  const [capabilities, setCapabilities] = useState<CapabilityCandidate[]>(
+    initialSelection?.capabilities ?? [],
+  );
+  const [capFreeText, setCapFreeText] = useState(
+    initialSelection?.capFreeText ?? "",
+  );
+  const [otherText, setOtherText] = useState(initialSelection?.otherText ?? "");
 
   const toggleUnderstandCap = (c: CapabilityCandidate) =>
     setUnderstandCaps((prev) =>
+      prev.some((x) => x.id === c.id)
+        ? prev.filter((x) => x.id !== c.id)
+        : [...prev, c],
+    );
+
+  const toggleCapability = (c: CapabilityCandidate) =>
+    setCapabilities((prev) =>
       prev.some((x) => x.id === c.id)
         ? prev.filter((x) => x.id !== c.id)
         : [...prev, c],
@@ -106,40 +129,58 @@ export function IntentSurvey({
     if (verb === "understand")
       return understandCaps.length > 0 || understandText.trim().length > 0;
     if (verb === "edit" || verb === "reference")
-      return capability !== null || capFreeText.trim().length > 0;
+      return capabilities.length > 0 || capFreeText.trim().length > 0;
     if (verb === "other") return otherText.trim().length > 0;
     return false;
   })();
 
   const handleSubmit = () => {
     if (!verb || !canSubmit) return;
-    const goal = composeGoal({
+    const selection: IntentSelection = {
       verb,
       understandCaps,
       understandText,
-      capability,
+      capabilities,
       capFreeText,
       otherText,
-    });
+    };
+    const goal = composeGoal(selection);
     if (!goal.trim()) return;
-    onComplete(goal);
+    onComplete(goal, selection);
   };
 
   const activeVerb = VERBS.find((v) => v.value === verb) ?? null;
 
   return (
-    <div className="survey-overlay-in pointer-events-auto absolute inset-0 z-50 flex items-center justify-center bg-[#2A2622]/30 backdrop-blur-[3px]">
+    <div
+      className="survey-overlay-in pointer-events-auto absolute inset-0 z-50 flex items-center justify-center bg-[#2A2622]/30 backdrop-blur-[3px]"
+      onMouseDown={(e) => {
+        if (onCancel && e.target === e.currentTarget) onCancel();
+      }}
+    >
       <div
-        className="survey-card-in w-[min(660px,calc(100%-48px))] overflow-hidden rounded-[22px] border border-[#E7E2DA] bg-[#FCFBF9] shadow-[0_24px_70px_-20px_rgba(60,53,47,0.45)]"
+        className="survey-card-in relative w-[min(660px,calc(100%-48px))] overflow-hidden rounded-[22px] border border-[#E7E2DA] bg-[#FCFBF9] shadow-[0_24px_70px_-20px_rgba(60,53,47,0.45)]"
         onMouseDown={(e) => e.stopPropagation()}
       >
-        {/* Warm header band with a soft sand → paper gradient. */}
+        {/* Warm header band with a soft sand to paper gradient. */}
         <div className="bg-gradient-to-br from-[#F6F0E6] to-[#FCFBF9] px-6 pb-4 pt-5">
           <div className="flex items-center justify-between">
             <div className="text-[10.5px] font-semibold uppercase tracking-[0.14em] text-[#A89D8E]">
               {verb ? "Tell us a bit more" : "Before we draw"}
             </div>
-            <StepDots step={verb ? 2 : 1} />
+            <div className="flex items-center gap-2.5">
+              <StepDots step={verb ? 2 : 1} />
+              {onCancel && (
+                <button
+                  type="button"
+                  onClick={onCancel}
+                  title="Close"
+                  className="-mr-1 rounded-lg p-1 text-[#A89D8E] transition-colors hover:bg-[#F1ECE4] hover:text-[#5C544B]"
+                >
+                  <X className="h-4 w-4" strokeWidth={2} />
+                </button>
+              )}
+            </div>
           </div>
           <div className="mt-1.5 flex items-center gap-2.5">
             {activeVerb && (
@@ -201,8 +242,9 @@ export function IntentSurvey({
           {(verb === "edit" || verb === "reference") && (
             <CapabilityStep
               scanState={scanState}
-              capability={capability}
-              setCapability={setCapability}
+              capabilities={capabilities}
+              toggleCapability={toggleCapability}
+              clearCapabilities={() => setCapabilities([])}
               freeText={capFreeText}
               setFreeText={setCapFreeText}
             />

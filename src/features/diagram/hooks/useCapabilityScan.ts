@@ -15,7 +15,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { FileEntry } from "@/core/project";
 import type { CapabilityCandidate, CapabilityScanState } from "../types";
-import { buildProjectContext } from "../api/buildProjectContext";
+import { buildScanContext } from "../api/buildProjectContext";
 import { fetchCapabilityScanStream } from "../api/fetchCapabilityScan";
 
 export function useCapabilityScan({
@@ -47,7 +47,10 @@ export function useCapabilityScan({
 
     setState({ kind: "loading", startedAt: Date.now() });
     const controller = new AbortController();
-    const projectContext = buildProjectContext(files, null);
+    // Onboarding scan: read a trusted architecture doc (CLAUDE.md /
+    // AGENTS.md) + tree when present instead of the whole codebase.
+    // Falls back to full context otherwise.
+    const projectContext = buildScanContext(files);
     const candidates: CapabilityCandidate[] = [];
 
     (async () => {

@@ -2,10 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useReactFlow, type Node } from "@xyflow/react";
 import type { DiagramBlock } from "../types";
 import { NODE_H, NODE_W } from "../layout/constants";
-import {
-  buildBubbleAndSectorNodes,
-  bubbleItemsForBlock,
-} from "../layout/bubbleNodes";
+import { buildBubbleAndSectorNodes } from "../layout/bubbleNodes";
 
 /**
  * Owns the click-block → fan-out-bubbles state machine. The actual
@@ -134,12 +131,11 @@ export function useBubbleFocus({
   }, [expandedBlockId]);
 
   const toggleBlock = (id: string) => {
-    // Block with no bubbles (no functions and not an interface surface)
-    // has nothing to expand into. Don't pan viewport into a phantom
-    // cluster; the user complained about clicking a block and getting
-    // "zoom in, nothing happens".
+    // Block with no functions has nothing to expand into. Don't pan
+    // viewport into a phantom cluster; the user complained about
+    // clicking a block and getting "zoom in, nothing happens".
     const block = blocks.find((b) => b.id === id);
-    if (!block || bubbleItemsForBlock(block).length === 0) {
+    if (!block || (block.provenance?.functions ?? []).length === 0) {
       // Still collapse if this block is the one currently expanded.
       if (expandedBlockId === id) setExpandedBlockId(null);
       return;

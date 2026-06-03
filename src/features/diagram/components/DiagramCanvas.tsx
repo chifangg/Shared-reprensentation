@@ -76,9 +76,10 @@ import { AddNewBlockButton } from "./overlays/AddNewBlockButton";
 import { CategoryLegend } from "./overlays/CategoryLegend";
 import { BubbleEditOverlays } from "./overlays/BubbleEditOverlays";
 import { useBubbleEditOverlays } from "../hooks/useBubbleEditOverlays";
+import { useOnboardingIntent } from "../hooks/useOnboardingIntent";
 import { IntentSurvey } from "./overlays/IntentSurvey";
 import { SurveyPreparingOverlay } from "./overlays/SurveyPreparingOverlay";
-import { RegenerateDiagramButton } from "./overlays/RegenerateDiagramButton";
+import { IntentChip } from "./overlays/IntentChip";
 import { DiagramFocusPanel } from "./panel/DiagramFocusPanel";
 
 export function DiagramCanvas({ view }: { view: DiagramView }) {
@@ -154,7 +155,7 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
   const [userGoal, setUserGoal] = useState<string | null>(null);
   // Gates the survey behind the intro overlay: the survey only opens
   // once the intro timeline finished AND the scan resolved. Reset
-  // alongside userGoal (projectKey change + Regenerate).
+  // alongside userGoal (projectKey change).
   const [surveyIntroDone, setSurveyIntroDone] = useState(false);
   const handleSurveyIntroReady = useCallback(
     () => setSurveyIntroDone(true),
@@ -244,18 +245,22 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
     userPositionsRef.current.clear();
   }, [projectKey]);
 
-  /** "Regenerate" FAB handler: clear the goal so the survey re-opens,
-   *  reset the structure fetch state to idle, and wipe the canvas so
-   *  the new run starts from a blank slate. */
-  const handleRegenerate = useCallback(() => {
-    setUserGoal(null);
-    setSurveyIntroDone(false);
+  /** Wipe the canvas so a regenerate starts from a blank slate. The
+   *  structure fetch re-fires once userGoal is (re)set and state is idle. */
+  const onRegenerate = useCallback(() => {
     setState({ kind: "idle" });
     setNodes([]);
     setEdges([]);
     setSelectedId(null);
     setPromoted({ blocks: [], arrows: [] });
   }, [setState, setNodes, setEdges]);
+
+  const intentCtl = useOnboardingIntent({
+    projectKey,
+    userGoal,
+    setUserGoal,
+    onRegenerate,
+  });
 
   // We deliberately do NOT clear `focused` when switching away from
   // focus view — the layout/panel both already gate on `view === "focus"`,
@@ -929,23 +934,33 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
         {state.kind === "ready" && !pendingOptions && !intentGate && (
           <AddNewBlockButton onClick={handleAddNewBlock} />
         )}
-        {state.kind === "ready" && userGoal !== null && (
-          <RegenerateDiagramButton onClick={handleRegenerate} />
-        )}
+        {state.kind === "ready" &&
+          intentCtl.intent !== null &&
+          !intentCtl.editingIntent && (
+            <IntentChip
+              intent={intentCtl.intent}
+              onEdit={intentCtl.openEditor}
+            />
+          )}
         {userGoal === null &&
           files.length > 0 &&
           (surveyIntroDone &&
           (scanState.kind === "ready" || scanState.kind === "error") ? (
-            <IntentSurvey
-              scanState={scanState}
-              onComplete={(goal) => setUserGoal(goal)}
-            />
+            <IntentSurvey scanState={scanState} onComplete={intentCtl.complete} />
           ) : (
             <SurveyPreparingOverlay
               scanState={scanState}
               onReady={handleSurveyIntroReady}
             />
           ))}
+        {intentCtl.editingIntent && (
+          <IntentSurvey
+            scanState={scanState}
+            initialSelection={intentCtl.intent ?? undefined}
+            onComplete={intentCtl.revise}
+            onCancel={intentCtl.closeEditor}
+          />
+        )}
         {editSummary && (
           <EditSummaryToast
             summary={editSummary}
@@ -968,17 +983,11 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
             blocks={state.schema.blocks}
             files={files}
             detail={bubbleEdit.detail}
-            appearance={bubbleEdit.appearance}
             onCloseDetail={bubbleEdit.closeDetail}
-            onCloseAppearance={bubbleEdit.closeAppearance}
             onConfirmDetail={(blockId, instruction) => {
               dispatchExecuteDirect({ kind: "block", id: blockId }, instruction);
               bubbleEdit.closeDetail();
               clearBubbles();
-            }}
-            onConfirmAppearance={(blockId, instruction) => {
-              dispatchExecuteDirect({ kind: "block", id: blockId }, instruction);
-              bubbleEdit.closeAppearance();
             }}
           />
         )}

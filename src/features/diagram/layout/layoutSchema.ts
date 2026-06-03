@@ -124,11 +124,83 @@ export function layoutSchema(
     connected.add(to);
   }
 
+  // --- Importance-based re-rooting -------------------------------------
+  // dagre ranks purely by edge direction, so a convergence point (many
+  // arrows pointing IN) lands at the BOTTOM even when it is the block the
+  // user should read first. Instead we pick a `primary` block by
+  // connectivity and lay the graph out top-down FROM it: the primary sits
+  // at the top rank and everything else descends by graph distance.
+  //
+  // Only the edges dagre RANKS on are re-oriented here. The rendered
+  // arrows further down keep their original direction, so the semantics
+  // are intact (an arrow into the primary still points at it, i.e. up).
+  const undirected = new Map<string, string[]>();
+  const degree = new Map<string, number>();
+  const inDegree = new Map<string, number>();
+  for (const [u, v] of dagreEdges) {
+    if (!undirected.has(u)) undirected.set(u, []);
+    if (!undirected.has(v)) undirected.set(v, []);
+    undirected.get(u)!.push(v);
+    undirected.get(v)!.push(u);
+    degree.set(u, (degree.get(u) ?? 0) + 1);
+    degree.set(v, (degree.get(v) ?? 0) + 1);
+    inDegree.set(v, (inDegree.get(v) ?? 0) + 1);
+  }
+  // Primary = most-connected block; ties broken by in-degree (a hub that
+  // everything feeds), then emission order: the loop runs in emission
+  // order and only replaces on a strict gain, so the earliest wins ties.
+  let primary: string | null = null;
+  for (const b of schema.blocks) {
+    if (!connected.has(b.id)) continue;
+    if (primary === null) {
+      primary = b.id;
+      continue;
+    }
+    const d = degree.get(b.id) ?? 0;
+    const pd = degree.get(primary) ?? 0;
+    if (
+      d > pd ||
+      (d === pd &&
+        (inDegree.get(b.id) ?? 0) > (inDegree.get(primary) ?? 0))
+    ) {
+      primary = b.id;
+    }
+  }
+  // BFS distance from the primary (then from any other component's first
+  // unvisited block) gives every connected block a layer.
+  const depth = new Map<string, number>();
+  const bfsFrom = (root: string) => {
+    depth.set(root, 0);
+    const queue = [root];
+    while (queue.length > 0) {
+      const u = queue.shift()!;
+      for (const w of undirected.get(u) ?? []) {
+        if (!depth.has(w)) {
+          depth.set(w, (depth.get(u) ?? 0) + 1);
+          queue.push(w);
+        }
+      }
+    }
+  };
+  if (primary) bfsFrom(primary);
+  for (const b of schema.blocks) {
+    if (connected.has(b.id) && !depth.has(b.id)) bfsFrom(b.id);
+  }
+
   for (const b of schema.blocks) {
     if (!connected.has(b.id)) continue;
     g.setNode(b.id, { width: NODE_W, height: blockHeight(b) });
   }
-  for (const [from, to] of dagreEdges) g.setEdge(from, to);
+  // Feed dagre edges oriented shallow->deep so the primary (depth 0) ranks
+  // at the top. Same-depth edges are skipped from ranking (they would
+  // shove siblings onto adjacent ranks); they still render as arrows.
+  for (const [from, to] of dagreEdges) {
+    const df = depth.get(from);
+    const dt = depth.get(to);
+    if (df === undefined || dt === undefined) g.setEdge(from, to);
+    else if (df < dt) g.setEdge(from, to);
+    else if (dt < df) g.setEdge(to, from);
+  }
 
   dagre.layout(g);
 
@@ -261,12 +333,20 @@ export function layoutSchema(
       : a.label;
     const dim = hasFocus && !(focusedSet.has(a.from) || focusedSet.has(a.to));
     const isPending = a.pending !== undefined;
+    // Adaptive handles: when the target sits ABOVE the source (an arrow
+    // pointing up into a higher-ranked block, e.g. feeders into the
+    // primary), exit the top edge and enter the bottom edge so the line
+    // does not loop around. Otherwise exit bottom, enter top (normal
+    // downward flow).
+    const fromPos = posMap.get(a.from);
+    const toPos = posMap.get(a.to);
+    const upward = !!fromPos && !!toPos && toPos.y < fromPos.y - 1;
     edges.push({
       id: `sem-${a.from}-${a.to}-${a.label}`,
       source: a.from,
       target: a.to,
-      sourceHandle: "b",
-      targetHandle: "t",
+      sourceHandle: upward ? "t" : "b",
+      targetHandle: upward ? "b" : "t",
       type: "labeled",
       label: finalLabel || undefined,
       // Marching-ants while pending (any stage); settled arrows skip
