@@ -170,6 +170,12 @@ pub async fn create_web_server(
             "/api/function-detail",
             axum::routing::post(crate::diagram::function_detail),
         )
+        // Read-only plain-language explanation of one arrow (relationship)
+        // between two blocks, for the pill drill-in lenses.
+        .route(
+            "/api/connection-detail",
+            axum::routing::post(crate::diagram::connection_detail),
+        )
         // Internal: called by the tool-bridge subprocess via loopback only.
         // Protected by the per-spawn X-Tool-Bridge-Secret header.
         .route(

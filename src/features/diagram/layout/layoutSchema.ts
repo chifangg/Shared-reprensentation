@@ -12,7 +12,7 @@
  */
 
 import dagre from "@dagrejs/dagre";
-import type { Edge, Node } from "@xyflow/react";
+import { MarkerType, type Edge, type Node } from "@xyflow/react";
 import type {
   BlockNodeData,
   DiagramArrow,
@@ -261,6 +261,7 @@ export function layoutSchema(
         caption: b.caption,
         files: b.provenance?.files ?? [],
         functions: b.provenance?.functions ?? [],
+        capabilities: b.capabilities ?? [],
         category: b.category,
         isContainer: containerIds.has(b.id),
         isFocused: focusedSet.has(b.id),
@@ -333,25 +334,48 @@ export function layoutSchema(
       : a.label;
     const dim = hasFocus && !(focusedSet.has(a.from) || focusedSet.has(a.to));
     const isPending = a.pending !== undefined;
-    // Adaptive handles: when the target sits ABOVE the source (an arrow
-    // pointing up into a higher-ranked block, e.g. feeders into the
-    // primary), exit the top edge and enter the bottom edge so the line
-    // does not loop around. Otherwise exit bottom, enter top (normal
-    // downward flow).
+    // Attach each end to the side of the block facing the other, by the
+    // dominant direction between them: a mostly-horizontal edge exits the
+    // right (or left) side, a mostly-vertical edge exits the bottom (or
+    // top). Spreading across all four sides keeps an incoming and an
+    // outgoing edge at the SAME block from stacking on one handle and
+    // reading as a single (bidirectional) line.
     const fromPos = posMap.get(a.from);
     const toPos = posMap.get(a.to);
-    const upward = !!fromPos && !!toPos && toPos.y < fromPos.y - 1;
+    let sourceHandle = "b";
+    let targetHandle = "t";
+    if (fromPos && toPos) {
+      const dx = toPos.x - fromPos.x;
+      const dy = toPos.y - fromPos.y;
+      if (Math.abs(dx) > Math.abs(dy)) {
+        sourceHandle = dx > 0 ? "r" : "l";
+        targetHandle = dx > 0 ? "l" : "r";
+      } else {
+        sourceHandle = dy > 0 ? "b" : "t";
+        targetHandle = dy > 0 ? "t" : "b";
+      }
+    }
     edges.push({
       id: `sem-${a.from}-${a.to}-${a.label}`,
       source: a.from,
       target: a.to,
-      sourceHandle: upward ? "t" : "b",
-      targetHandle: upward ? "b" : "t",
+      sourceHandle,
+      targetHandle,
       type: "labeled",
       label: finalLabel || undefined,
       // Marching-ants while pending (any stage); settled arrows skip
       // the class so they render as a normal solid line.
       className: isPending ? "pending-edge" : undefined,
+      // Arrowhead at the target end so the relationship's DIRECTION is
+      // visible. With the importance-based top-down layout the source can
+      // sit below the target, so without a head the line reads ambiguous
+      // (or backwards). The head lands at whichever handle the edge enters.
+      markerEnd: {
+        type: MarkerType.ArrowClosed,
+        width: 16,
+        height: 16,
+        color: isPending ? "#78716C" : "#666666",
+      },
       style: isPending
         ? {
             stroke: "#78716C",

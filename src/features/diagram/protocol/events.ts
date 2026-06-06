@@ -9,6 +9,7 @@
 
 import type {
   ArrowsAddedDetail,
+  ConnectionLensDetail,
   OptionExecutedDetail,
   OptionsReadyDetail,
   VisualEditDetail,
@@ -46,6 +47,14 @@ export type DiagramBusMessageMap = {
    * to the schema with pending="claude" until chatRunning settles.
    */
   "arrows-added": ArrowsAddedDetail;
+
+  /**
+   * LabeledEdge -> Diagram (intra-feature). The user clicked an arrow's
+   * label pill; the diagram opens the connection lenses anchored at the
+   * click point. Emitted from the edge component (which only knows the
+   * source/target/verb), resolved to blocks + files by the canvas.
+   */
+  "connection-lens": ConnectionLensDetail;
 };
 
 export type DiagramBusTopic = keyof DiagramBusMessageMap;

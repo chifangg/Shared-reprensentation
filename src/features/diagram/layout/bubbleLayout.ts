@@ -34,10 +34,10 @@ const FAN_MAX_SPREAD_DEG = 200;
 const FAN_PER_BUBBLE_DEG = 24;
 
 /** Minimum center-to-center arc distance (px) between adjacent bubbles.
- *  Bubbles are an 80px circle (BUBBLE_HALF_SIZE * 2); this adds a small
+ *  Bubbles are a ~112px circle (BUBBLE_HALF_SIZE * 2); this adds a small
  *  visual gap on top so they never kiss. `fanRadius` grows the radius
  *  until the chord between neighbours clears this. */
-const MIN_BUBBLE_ARC_SPACING = 92;
+const MIN_BUBBLE_ARC_SPACING = 128;
 
 /** Total angular spread (deg) for a fan of `count` bubbles. Grows with
  *  count up to FAN_MAX_SPREAD_DEG. Spread spans (count - 1) gaps. */

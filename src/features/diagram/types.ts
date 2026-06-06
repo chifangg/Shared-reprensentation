@@ -52,6 +52,11 @@ export type DiagramBlock = {
   /** Model-assigned category for color-coding. May be absent on detail
    *  blocks or schemas generated before categories existed. */
   category?: BlockCategory;
+  /** Short plain-language sub-capabilities the model decomposes the block
+   *  into (terse verb phrases). These drive the drill-in bubbles. Absent
+   *  on schemas generated before this field existed, in which case the
+   *  bubbles fall back to provenance.functions. */
+  capabilities?: string[];
   provenance: { files: string[]; functions: string[] };
   /** Local-only marker for blocks the user just asked to create. Renders
    *  with a dashed blue border + marching-ants so it's obvious "this
@@ -108,6 +113,20 @@ export type CapabilityScanState =
   | { kind: "error"; message: string };
 
 export type IntentVerb = "understand" | "edit" | "reference" | "other";
+
+/** Fired when the user clicks an arrow-label pill: open the connection
+ *  lenses for that relationship, anchored at the click point. */
+export type ConnectionLensDetail = {
+  /** Source block id. */
+  from: string;
+  /** Target block id. */
+  to: string;
+  /** The arrow's verb label. */
+  verb: string;
+  /** Screen coords of the click, to anchor the overlay. */
+  x: number;
+  y: number;
+};
 
 /** The structured onboarding answer. Retained (not just the composed goal
  *  string) so the canvas can show the user what they chose and let them
@@ -193,6 +212,8 @@ export type BlockNodeData = {
   caption: string;
   files: string[];
   functions: string[];
+  /** Plain-language sub-capabilities the drill-in bubbles surface. */
+  capabilities?: string[];
   /** Model-assigned category for color-coding. Undefined falls back to
    *  the neutral card style. */
   category?: BlockCategory;

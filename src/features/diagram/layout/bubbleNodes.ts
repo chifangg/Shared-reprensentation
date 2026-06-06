@@ -28,15 +28,18 @@ import { humanizeFunctionName } from "../util/humanize";
  * sector arc from where the bubbles actually land.
  */
 
-/** Bubble pill is a fixed 80px circle (h-20 w-20 in tailwind). */
-export const BUBBLE_HALF_SIZE = 40;
+/** Bubble is a fixed circle (see FunctionBubble). Larger than the old
+ *  80px so a multi-word capability phrase fits without wrapping to one
+ *  or two words per line. Keep in sync with the diameter the component
+ *  renders. */
+export const BUBBLE_HALF_SIZE = 56;
 
 /** Radial distance from block center to bubble center for N >= 2. */
-const RADIUS_MULTI = 230;
+const RADIUS_MULTI = 250;
 
 /** Tighter radius for the single-bubble case so the lone bubble doesn't
  *  drift visually disconnected from its parent block. */
-const RADIUS_SINGLE = 150;
+const RADIUS_SINGLE = 168;
 
 /** Sector inner radius starts just past the block half-extents so the
  *  cream fill doesn't overlap the block card itself. */
@@ -102,6 +105,75 @@ function computeBorrowOffsets(args: {
   return offsets;
 }
 
+type BubbleItem = { label: string; display: string };
+
+/** Drill-in bubble items for a block: its plain-language capabilities when
+ *  present, else (older schemas) its humanized function names. */
+export function bubbleItemsForBlock(block: DiagramBlock): BubbleItem[] {
+  const caps = block.capabilities ?? [];
+  if (caps.length > 0) {
+    return caps.map((c) => ({ label: c, display: c }));
+  }
+  return (block.provenance?.functions ?? []).map((fn) => ({
+    label: fn,
+    display: humanizeFunctionName(fn),
+  }));
+}
+
+/** The fan's core geometry for a block, shared by the node builder and
+ *  the viewport-focus helper so the two never disagree about where the
+ *  bubbles land. */
+function fanGeometry(
+  blockPosition: { x: number; y: number },
+  count: number,
+  otherBlocks: Array<{ x: number; y: number }>,
+): {
+  cx: number;
+  cy: number;
+  centerAngleDeg: number;
+  radius: number;
+  positions: Array<{ x: number; y: number }>;
+} {
+  const cx = blockPosition.x + NODE_W / 2;
+  const cy = blockPosition.y + NODE_H / 2;
+  const centerAngleDeg = pickFanCenterAngle(cx, cy, otherBlocks);
+  const baseRadius = count === 1 ? RADIUS_SINGLE : RADIUS_MULTI;
+  const radius = fanRadius(count, baseRadius);
+  const positions = computeFanPositions(cx, cy, count, centerAngleDeg, radius);
+  return { cx, cy, centerAngleDeg, radius, positions };
+}
+
+/**
+ * Center point the viewport should focus on when this block's fan opens:
+ * the center of the bounding box around the block AND all its bubbles.
+ * Centering on the block alone clips the fan when it opens up or down
+ * (the canvas is wider than tall), so the bottom/top bubbles fall off
+ * screen. Framing the whole cluster fixes that.
+ */
+export function clusterFocusCenter(args: {
+  block: DiagramBlock;
+  blockPosition: { x: number; y: number };
+  otherBlocks: Array<{ x: number; y: number }>;
+}): { x: number; y: number } {
+  const { block, blockPosition, otherBlocks } = args;
+  const items = bubbleItemsForBlock(block);
+  if (items.length === 0) {
+    return { x: blockPosition.x + NODE_W / 2, y: blockPosition.y + NODE_H / 2 };
+  }
+  const { positions } = fanGeometry(blockPosition, items.length, otherBlocks);
+  let minX = blockPosition.x;
+  let maxX = blockPosition.x + NODE_W;
+  let minY = blockPosition.y;
+  let maxY = blockPosition.y + NODE_H;
+  for (const p of positions) {
+    minX = Math.min(minX, p.x - BUBBLE_HALF_SIZE);
+    maxX = Math.max(maxX, p.x + BUBBLE_HALF_SIZE);
+    minY = Math.min(minY, p.y - BUBBLE_HALF_SIZE);
+    maxY = Math.max(maxY, p.y + BUBBLE_HALF_SIZE);
+  }
+  return { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
+}
+
 export function buildBubbleAndSectorNodes(args: {
   activeBlockId: string;
   block: DiagramBlock;
@@ -110,27 +182,19 @@ export function buildBubbleAndSectorNodes(args: {
   isExiting: boolean;
 }): { nodes: Node[]; borrow: Map<string, { x: number; y: number }> } {
   const { activeBlockId, block, blockPosition, otherBlocks, isExiting } = args;
-  const fns = block.provenance?.functions ?? [];
-  if (fns.length === 0) return { nodes: [], borrow: new Map() };
+  const items = bubbleItemsForBlock(block);
+  if (items.length === 0) return { nodes: [], borrow: new Map() };
 
-  const cx = blockPosition.x + NODE_W / 2;
-  const cy = blockPosition.y + NODE_H / 2;
-
-  const centerAngleDeg = pickFanCenterAngle(cx, cy, otherBlocks);
-  const baseRadius = fns.length === 1 ? RADIUS_SINGLE : RADIUS_MULTI;
-  const radius = fanRadius(fns.length, baseRadius);
-  const positions = computeFanPositions(
-    cx,
-    cy,
-    fns.length,
-    centerAngleDeg,
-    radius,
+  const { cx, cy, centerAngleDeg, radius, positions } = fanGeometry(
+    blockPosition,
+    items.length,
+    otherBlocks,
   );
 
   const sectorOuterR = radius + BUBBLE_HALF_SIZE + SECTOR_OUTER_PAD;
-  const fanSpread = fanSpreadDeg(fns.length);
+  const fanSpread = fanSpreadDeg(items.length);
   const sectorHalfArc =
-    fns.length === 1
+    items.length === 1
       ? SECTOR_ANGLE_PAD_DEG
       : fanSpread / 2 + SECTOR_ANGLE_PAD_DEG;
   const sectorNode: Node<BubbleSectorNodeData> = {
@@ -152,7 +216,7 @@ export function buildBubbleAndSectorNodes(args: {
     zIndex: -1,
   };
 
-  const bubbles: Node<BubbleNodeData>[] = fns.map((fn, i) => {
+  const bubbles: Node<BubbleNodeData>[] = items.map((item, i) => {
     const posX = positions[i].x - BUBBLE_HALF_SIZE;
     const posY = positions[i].y - BUBBLE_HALF_SIZE;
     // Offset from bubble center to block center: the radial-outward
@@ -165,8 +229,8 @@ export function buildBubbleAndSectorNodes(args: {
       type: "bubble",
       position: { x: posX, y: posY },
       data: {
-        label: fn,
-        displayLabel: humanizeFunctionName(fn),
+        label: item.label,
+        displayLabel: item.display,
         parentBlockId: activeBlockId,
         isExiting,
         enterDx: cx - bubbleCenterX,

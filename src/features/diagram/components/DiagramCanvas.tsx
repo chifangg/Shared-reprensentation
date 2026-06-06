@@ -13,6 +13,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -75,6 +76,8 @@ import { AdaptiveFocusBanner } from "./overlays/AdaptiveFocusBanner";
 import { AddNewBlockButton } from "./overlays/AddNewBlockButton";
 import { CategoryLegend } from "./overlays/CategoryLegend";
 import { BubbleEditOverlays } from "./overlays/BubbleEditOverlays";
+import { ConnectionLensOverlay } from "./overlays/ConnectionLensOverlay";
+import { useConnectionLens } from "../hooks/useConnectionLens";
 import { useBubbleEditOverlays } from "../hooks/useBubbleEditOverlays";
 import { useOnboardingIntent } from "../hooks/useOnboardingIntent";
 import { IntentSurvey } from "./overlays/IntentSurvey";
@@ -82,15 +85,29 @@ import { SurveyPreparingOverlay } from "./overlays/SurveyPreparingOverlay";
 import { IntentChip } from "./overlays/IntentChip";
 import { DiagramFocusPanel } from "./panel/DiagramFocusPanel";
 
-export function DiagramCanvas({ view }: { view: DiagramView }) {
+export function DiagramCanvas({
+  view,
+  headerSlot,
+}: {
+  view: DiagramView;
+  /** DOM node in the panel header where the intent chip portals itself,
+   *  so it lives in the chrome instead of floating over the canvas. */
+  headerSlot?: HTMLElement | null;
+}) {
   return (
     <ReactFlowProvider>
-      <DiagramCanvasInner view={view} />
+      <DiagramCanvasInner view={view} headerSlot={headerSlot} />
     </ReactFlowProvider>
   );
 }
 
-function DiagramCanvasInner({ view }: { view: DiagramView }) {
+function DiagramCanvasInner({
+  view,
+  headerSlot,
+}: {
+  view: DiagramView;
+  headerSlot?: HTMLElement | null;
+}) {
   const { files, chatMessages, chatRunning, projectKey } = useProject();
   const bus = useDiagramBus();
 
@@ -129,6 +146,11 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
     [],
   );
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+
+  // Connection-lens overlay (arrow-label pill drill-in). Owns its state,
+  // the bus subscribe, reset, and the zoom-to-edge; the card floats next
+  // to the clicked pill.
+  const connection = useConnectionLens(projectKey, nodes);
 
   // Positions the user has dragged blocks to, keyed by block id. Re-laid
   // out nodes (e.g. when selection toggles or a bubble cluster opens)
@@ -199,6 +221,7 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
   // block's provenance.functions and rendered as fan-laid ReactFlow
   // nodes; viewport pans/zooms to the cluster and restores on collapse.
   const {
+    expandedBlockId,
     bubbleNodes,
     borrowOffsets,
     toggleBlock: toggleBubbleBlock,
@@ -219,20 +242,40 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
   // are non-selectable / non-draggable, so onNodesChange never touches
   // their data fields. Safe at runtime; types just need the alignment.
   const renderedNodes = useMemo<Node<BlockNodeData>[]>(() => {
-    // Apply "borrow" make-way offsets to whichever blocks the open
-    // bubble fan would cover; React Flow's transform transition glides
-    // them aside on expand and back when borrowOffsets empties.
-    const base =
-      borrowOffsets.size === 0
-        ? nodes
-        : nodes.map((n) => {
-            const moved = borrowOffsets.get(n.id);
-            return moved ? { ...n, position: moved } : n;
-          });
+    // While a fan is open every OTHER block fades back so the cluster is
+    // the sole focus (the user's "let everything step aside" ask); the
+    // in-the-way ones additionally glide via borrowOffsets. On collapse
+    // expandedBlockId clears, so both the fade and the move reverse.
+    const base = nodes.map((n) => {
+      const moved = borrowOffsets.get(n.id);
+      const dim = expandedBlockId !== null && n.id !== expandedBlockId;
+      if (!moved && !dim) return n;
+      return {
+        ...n,
+        position: moved ?? n.position,
+        style: dim
+          ? { ...n.style, opacity: 0.16, transition: "opacity 200ms ease" }
+          : n.style,
+      };
+    });
     return bubbleNodes.length === 0
       ? base
       : [...base, ...(bubbleNodes as unknown as Node<BlockNodeData>[])];
-  }, [nodes, bubbleNodes, borrowOffsets]);
+  }, [nodes, bubbleNodes, borrowOffsets, expandedBlockId]);
+
+  // Fade + de-activate every edge and its label while a fan is open, so
+  // no line or label pill floats over the bubbles. `data.dimmed` lets
+  // LabeledEdge drop the pill's opacity and pointer events; the path
+  // dims via the style opacity. Restores the moment the fan collapses.
+  const renderedEdges = useMemo<Edge[]>(() => {
+    if (expandedBlockId === null) return edges;
+    return edges.map((e) => ({
+      ...e,
+      style: { ...e.style, opacity: 0.1, transition: "opacity 200ms ease" },
+      data: { ...e.data, dimmed: true },
+    }));
+  }, [edges, expandedBlockId]);
+
 
   // Reset the small in-component state on USER-initiated project
   // change. (FetchState, nodes/edges, focused, regenerating are
@@ -877,7 +920,7 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
       >
         <ReactFlow
           nodes={renderedNodes}
-          edges={edges}
+          edges={renderedEdges}
           onNodesChange={handleNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={handleAddConnection}
@@ -936,11 +979,14 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
         )}
         {state.kind === "ready" &&
           intentCtl.intent !== null &&
-          !intentCtl.editingIntent && (
+          !intentCtl.editingIntent &&
+          headerSlot &&
+          createPortal(
             <IntentChip
               intent={intentCtl.intent}
               onEdit={intentCtl.openEditor}
-            />
+            />,
+            headerSlot,
           )}
         {userGoal === null &&
           files.length > 0 &&
@@ -989,6 +1035,17 @@ function DiagramCanvasInner({ view }: { view: DiagramView }) {
               bubbleEdit.closeDetail();
               clearBubbles();
             }}
+          />
+        )}
+        {connection.lens && state.kind === "ready" && (
+          <ConnectionLensOverlay
+            key={`${connection.lens.from}-${connection.lens.to}-${connection.lens.verb}`}
+            detail={connection.lens}
+            blocks={state.schema.blocks}
+            files={files}
+            onClose={connection.close}
+            offset={connection.cardOffset}
+            onOffsetChange={connection.setCardOffset}
           />
         )}
       </div>

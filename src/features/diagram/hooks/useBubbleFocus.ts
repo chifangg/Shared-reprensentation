@@ -2,7 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { useReactFlow, type Node } from "@xyflow/react";
 import type { DiagramBlock } from "../types";
 import { NODE_H, NODE_W } from "../layout/constants";
-import { buildBubbleAndSectorNodes } from "../layout/bubbleNodes";
+import {
+  buildBubbleAndSectorNodes,
+  bubbleItemsForBlock,
+  clusterFocusCenter,
+} from "../layout/bubbleNodes";
 
 /**
  * Owns the click-block → fan-out-bubbles state machine. The actual
@@ -123,19 +127,42 @@ export function useBubbleFocus({
     }
     const blockNode = nodes.find((n) => n.id === expandedBlockId);
     if (!blockNode) return;
+    const block = blocks.find((b) => b.id === expandedBlockId);
     setSavedViewport((prev) => prev ?? reactFlow.getViewport());
-    const cx = blockNode.position.x + NODE_W / 2;
-    const cy = blockNode.position.y + NODE_H / 2;
-    reactFlow.setCenter(cx, cy, { zoom: FOCUS_ZOOM, duration: VIEWPORT_MS });
+    // Focus the whole cluster (block + fan), not just the block, so an
+    // up/down fan isn't clipped by the wider-than-tall canvas.
+    const otherBlocks = nodes
+      .filter(
+        (n) =>
+          n.id !== expandedBlockId &&
+          n.type !== "bubble" &&
+          n.type !== "bubbleSector",
+      )
+      .map((n) => ({ x: n.position.x, y: n.position.y }));
+    const focus = block
+      ? clusterFocusCenter({
+          block,
+          blockPosition: blockNode.position,
+          otherBlocks,
+        })
+      : {
+          x: blockNode.position.x + NODE_W / 2,
+          y: blockNode.position.y + NODE_H / 2,
+        };
+    reactFlow.setCenter(focus.x, focus.y, {
+      zoom: FOCUS_ZOOM,
+      duration: VIEWPORT_MS,
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expandedBlockId]);
 
   const toggleBlock = (id: string) => {
-    // Block with no functions has nothing to expand into. Don't pan
-    // viewport into a phantom cluster; the user complained about
-    // clicking a block and getting "zoom in, nothing happens".
+    // Block with no drill-in items (no capabilities / functions) has
+    // nothing to expand into. Don't pan viewport into a phantom cluster;
+    // the user complained about clicking a block and getting "zoom in,
+    // nothing happens".
     const block = blocks.find((b) => b.id === id);
-    if (!block || (block.provenance?.functions ?? []).length === 0) {
+    if (!block || bubbleItemsForBlock(block).length === 0) {
       // Still collapse if this block is the one currently expanded.
       if (expandedBlockId === id) setExpandedBlockId(null);
       return;

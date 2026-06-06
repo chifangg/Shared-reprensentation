@@ -4,8 +4,10 @@ import { VERBS } from "./IntentSurvey";
 import { intentSummary } from "./IntentSurveySteps";
 
 /**
- * Top-right chip showing the user's current onboarding intent. Replaces
- * the old blunt "Regenerate" button and makes its two jobs explicit:
+ * Chip showing the user's current onboarding intent. Lives in the panel
+ * header (portaled there from the canvas so it does not cover the
+ * diagram) and replaces the old blunt "Regenerate" button. Its two jobs
+ * are made explicit:
  *
  *   - LEFT zone  = what you picked. Discrete capability selections render
  *     as small colored tags (a swatch + the label) so multiple picks read
@@ -49,7 +51,7 @@ export function IntentChip({
       type="button"
       onClick={onEdit}
       title="Your current focus. Click to change what the diagram emphasizes (it only regenerates if you actually change the selection)."
-      className="absolute right-4 top-4 z-40 flex max-w-[480px] items-center gap-2.5 rounded-full border border-[#E7E2DA] bg-white/95 py-1.5 pl-1.5 pr-2.5 shadow-md backdrop-blur transition-colors hover:border-[#D8CFC2] hover:bg-white"
+      className="flex max-w-[480px] items-center gap-2.5 rounded-full border border-[#E7E2DA] bg-white py-1 pl-1.5 pr-2.5 shadow-sm transition-colors hover:border-[#D8CFC2] hover:bg-[#FCFBF9]"
     >
       {Icon && meta && (
         <span

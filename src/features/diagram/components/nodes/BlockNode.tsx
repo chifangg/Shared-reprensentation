@@ -24,6 +24,10 @@ import { categoryStyle } from "../../util/blockCategory";
 export function BlockNode({ data, selected }: NodeProps<Node<BlockNodeData>>) {
   const fileCount = data.files.length;
   const fnCount = data.functions.length;
+  const capCount = data.capabilities?.length ?? 0;
+  // What the drill-in bubbles surface: capabilities when present, else the
+  // older function list.
+  const drillCount = capCount > 0 ? capCount : fnCount;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(data.label);
   // Sync draft with external label updates (e.g. diagram regenerated)
@@ -172,20 +176,22 @@ export function BlockNode({ data, selected }: NodeProps<Node<BlockNodeData>>) {
           {data.caption}
         </div>
       )}
-      {(fileCount > 0 || fnCount > 0) && (
+      {(fileCount > 0 || drillCount > 0) && (
         <div
           className="mt-1.5 text-[10px] uppercase tracking-wide text-[#999999]"
-          // Hover-tooltip lists actual file names + first few functions.
-          // We dropped the in-block expanded lists — they crowded the
-          // node and were hard to read at this scale; the hover gives
-          // the same info on demand without taking layout space.
+          // Hover-tooltip lists actual file names + the capabilities (or,
+          // for older schemas, the functions). The in-block expanded lists
+          // were dropped: they crowded the node and were hard to read at
+          // this scale; the hover gives the same info on demand.
           title={[
             fileCount > 0 ? `Files:\n${data.files.join("\n")}` : "",
-            fnCount > 0
-              ? `Functions:\n${data.functions.slice(0, 12).join(", ")}${
-                  fnCount > 12 ? ` (+${fnCount - 12} more)` : ""
-                }`
-              : "",
+            capCount > 0
+              ? `Capabilities:\n${(data.capabilities ?? []).join("\n")}`
+              : fnCount > 0
+                ? `Functions:\n${data.functions.slice(0, 12).join(", ")}${
+                    fnCount > 12 ? ` (+${fnCount - 12} more)` : ""
+                  }`
+                : "",
           ]
             .filter(Boolean)
             .join("\n\n")}
@@ -195,10 +201,17 @@ export function BlockNode({ data, selected }: NodeProps<Node<BlockNodeData>>) {
               {fileCount} {fileCount === 1 ? "file" : "files"}
             </>
           )}
-          {fileCount > 0 && fnCount > 0 && " · "}
-          {fnCount > 0 && (
+          {fileCount > 0 && drillCount > 0 && " · "}
+          {drillCount > 0 && (
             <>
-              {fnCount} {fnCount === 1 ? "fn" : "fns"}
+              {drillCount}{" "}
+              {capCount > 0
+                ? drillCount === 1
+                  ? "feature"
+                  : "features"
+                : drillCount === 1
+                  ? "fn"
+                  : "fns"}
             </>
           )}
         </div>

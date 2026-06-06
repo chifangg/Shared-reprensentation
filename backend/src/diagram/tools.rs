@@ -24,7 +24,14 @@ fn block_input_schema() -> serde_json::Value {
             "category": {
                 "type": "string",
                 "enum": ["interface", "logic", "data", "state", "integration", "config"],
-                "description": "Exactly one category for this block. interface = entry surfaces the user or other systems reach: UI screens/panels, API endpoints, CLI commands. logic = processing, engines, rules, pipelines, business logic. data = stored data: datasets, models, schemas, persistence, files. state = runtime app state: stores, session, in-memory caches, context. integration = external services this project calls out to, network clients, third-party glue. config = setup, theming, build, infra, environment, tooling. Pick the single best fit."
+                "description": "Exactly one role for this block, judged on two axes. BOUNDARY: interface = the inbound edge, where the outside reaches in (UI screens/panels, API endpoints, CLI commands); integration = the outbound edge, external services this project calls out to (network clients, third-party SDKs). INTERNAL (what it manages): logic = processing that keeps no state across calls (engines, rules, transforms, business logic); state = runtime state held across calls but NOT persisted (stores, session, in-memory caches, context); data = persistent or shared data (datasets, models, schemas, databases, files). config = off the runtime request path (setup, build, theming, infra, environment, tooling). Tie-break, pick the SINGLE role that dominates why the block exists: inbound vs outbound = who initiates (outside calls in = interface, this project calls out = integration); state vs data = transient runtime memory (state) vs persisted or shared across runs (data); config only when it is not on the runtime path."
+            },
+            "capabilities": {
+                "type": "array",
+                "items": { "type": "string" },
+                "minItems": 1,
+                "maxItems": 6,
+                "description": "The FEWEST distinct sub-capabilities that a user would want to inspect or edit SEPARATELY, each a terse plain-language verb phrase in user terms, about 4 words (e.g. \"Store chat turns\", \"Track image paths\"). Prefer the SMALLEST honest set: most blocks need 3 to 5; a simple block may have 1 or 2. Do NOT pad toward the limit, do NOT split one responsibility into finer steps just to add entries, and do NOT force unrelated things together. Only list something if it is a genuinely separate thing the user could act on. These surface as drill-in bubbles on the canvas, so keep them few and legible. Decompose what the block does; do NOT restate the caption and do NOT overlap entries. Derive from the real code, never invent. Never a raw function name like \"main\" or \"init\"."
             },
             "provenance": {
                 "type": "object",
@@ -35,7 +42,7 @@ fn block_input_schema() -> serde_json::Value {
                 "required": ["files", "functions"]
             }
         },
-        "required": ["id", "label", "caption", "category", "provenance"]
+        "required": ["id", "label", "caption", "category", "capabilities", "provenance"]
     })
 }
 

@@ -88,20 +88,21 @@ pub async fn function_detail(
 
     let prompt = match req.mode.as_str() {
         "describe" => format!(
-            "Below is the source of one or more files from a project, then the \
-name of one function or method in them.\n\n\
+            "Below is the source of one or more files from a project, then one \
+capability of that code (it may be a plain-language capability or a function \
+name).\n\n\
 SOURCE:\n{source}\n\n\
-FUNCTION: {fn_name}\n\n\
-Say, in plain everyday language a non-programmer can follow, what this piece \
-of the product does. Do not mention the function name, file names, paths, or \
-any code identifiers.\n\n\
+CAPABILITY: {fn_name}\n\n\
+Say, in plain everyday language a non-programmer can follow, what this \
+capability does and (briefly) how the code does it. Do not mention file \
+names, paths, or code identifiers.\n\n\
 Be brief. This shows on a visual canvas, so every word counts.\n\
 Return ONLY valid JSON, no markdown fences, in exactly this shape:\n\
 {{\"description\": \"ONE short sentence, 14 words max\", \"behaviors\": [\"3 word phrase\"]}}\n\
 Rules: description is ONE sentence, at most 14 words. Give AT MOST 3 \
 behaviors, each at most 5 words, only if they add something the sentence \
-does not. Fewer is better; an empty list is fine. If you cannot locate the \
-function, give a one-line best guess and an empty behaviors list.",
+does not. Fewer is better; an empty list is fine. If you cannot find it in \
+the code, give a one-line best guess and an empty behaviors list.",
             fn_name = req.function_name,
         ),
         "preview" => {

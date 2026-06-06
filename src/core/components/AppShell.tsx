@@ -172,14 +172,23 @@ function CodePanel({ onHide }: { onHide: () => void }) {
 
 function DiagramPanel() {
   const [view, setView] = useState<DiagramView>("overview");
+  // Mount point for the diagram feature's intent chip. The chip lives in
+  // the feature (it owns the state) and portals itself here so it sits in
+  // the header chrome instead of floating over the canvas. Callback ref so
+  // a re-render fires once the slot element exists.
+  const [headerSlot, setHeaderSlot] = useState<HTMLElement | null>(null);
   return (
     <div className="flex h-full flex-col bg-[#E6E6E6] text-[#484848]">
       <div className={`${LIGHT_HEADER} justify-between gap-3`}>
-        <span>Diagram Block</span>
+        <span className="shrink-0">Diagram Block</span>
+        <div
+          ref={setHeaderSlot}
+          className="flex min-w-0 flex-1 items-center justify-center"
+        />
         <DiagramViewSwitcher view={view} onChange={setView} />
       </div>
       <div className="min-h-0 flex-1">
-        <DiagramCanvas view={view} />
+        <DiagramCanvas view={view} headerSlot={headerSlot} />
       </div>
     </div>
   );
