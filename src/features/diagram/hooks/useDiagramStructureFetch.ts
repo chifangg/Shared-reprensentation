@@ -3,6 +3,7 @@ import {
   useMemo,
   useState,
   type Dispatch,
+  type MutableRefObject,
   type SetStateAction,
 } from "react";
 import type { Edge, Node } from "@xyflow/react";
@@ -41,6 +42,7 @@ export function useDiagramStructureFetch({
   selectedId,
   setNodes,
   setEdges,
+  preserveRegenRef,
 }: {
   projectKey: number;
   files: FileEntry[];
@@ -52,6 +54,12 @@ export function useDiagramStructureFetch({
   selectedId: string | null;
   setNodes: Dispatch<SetStateAction<Node<BlockNodeData>[]>>;
   setEdges: Dispatch<SetStateAction<Edge[]>>;
+  /** When `.active`, this fetch is an EDIT-driven regen: keep the old
+   *  diagram on screen, buffer the stream silently, and swap to the new
+   *  layout only once it is fully ready (so the canvas never blanks and
+   *  the user's spatial memory survives the rebuild). The settle-effect
+   *  flips it on; this hook flips it off once the swap lands. */
+  preserveRegenRef?: MutableRefObject<{ active: boolean }>;
 }): {
   state: FetchState;
   setState: Dispatch<SetStateAction<FetchState>>;
@@ -91,9 +99,16 @@ export function useDiagramStructureFetch({
     // Wait for the onboarding survey to deliver a goal before firing.
     if (userGoal === null) return;
 
+    // EDIT-driven regen: keep the existing diagram on screen, buffer the
+    // stream silently, and swap to the new layout only on `ready`. A
+    // normal generate blanks + streams blocks in as they arrive.
+    const preserve = preserveRegenRef?.current?.active ?? false;
+
     setState({ kind: "loading", startedAt: Date.now() });
-    setNodes([]);
-    setEdges([]);
+    if (!preserve) {
+      setNodes([]);
+      setEdges([]);
+    }
     const controller = new AbortController();
     const projectContext = buildProjectContext(files, userGoal);
 
@@ -118,7 +133,9 @@ export function useDiagramStructureFetch({
               const dupIdx = blocks.findIndex((b) => b.id === block.id);
               if (dupIdx >= 0) blocks[dupIdx] = block;
               else blocks.push(block);
-              reLayout();
+              // While preserving, don't morph the old diagram block by
+              // block; just accumulate and swap once at the end.
+              if (!preserve) reLayout();
             } else if (evt.kind === "arrow") {
               const arrow = evt.data;
               const dupIdx = arrows.findIndex(
@@ -126,7 +143,7 @@ export function useDiagramStructureFetch({
               );
               if (dupIdx >= 0) arrows[dupIdx] = arrow;
               else arrows.push(arrow);
-              reLayout();
+              if (!preserve) reLayout();
             } else if (evt.kind === "error") {
               errorMessage = evt.message;
             }
@@ -137,6 +154,9 @@ export function useDiagramStructureFetch({
         if (errorMessage) {
           setState({ kind: "error", message: errorMessage });
         } else {
+          // Lay out the final schema once and swap. For the preserve path
+          // this is the single moment the old diagram is replaced.
+          reLayout();
           setState({
             kind: "ready",
             schema: { blocks, arrows },
@@ -145,6 +165,8 @@ export function useDiagramStructureFetch({
       } catch (e) {
         if (controller.signal.aborted) return;
         setState({ kind: "error", message: String(e) });
+      } finally {
+        if (preserveRegenRef) preserveRegenRef.current.active = false;
       }
     })();
 

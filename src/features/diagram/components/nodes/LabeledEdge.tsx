@@ -3,21 +3,26 @@ import {
   BaseEdge,
   EdgeLabelRenderer,
   getSmoothStepPath,
-  useNodes,
   type EdgeProps,
 } from "@xyflow/react";
 import { useDiagramBus } from "../../protocol/bus";
-import { NODE_W, NODE_H } from "../../layout/constants";
+import {
+  pathLabelAnchor,
+  pointsToPath,
+  type Pt,
+} from "../../layout/orthogonalRoute";
 
 /**
- * Custom React Flow edge renderer for a labeled, smooth-stepped arrow.
+ * Custom React Flow edge renderer for a labeled, obstacle-avoiding arrow.
  *
- * The label pill is placed BESIDE its line (to the side, not centered on
- * it) so it does not sit on top of the arrow. On hover it emphasizes its
- * own line (thicker, darker) so, when pills bunch up near a junction, you
- * can tell which line a pill belongs to and which way it points. A click
- * emits `connection-lens` so the canvas opens the connection lenses (the
- * edge only knows ids; the canvas resolves them to blocks + files).
+ * The path is routed GLOBALLY by the canvas (routeManyEdges) so lines
+ * route around blocks AND fan into separate lanes; the routed waypoints
+ * arrive on `data.routedPath` and this component just draws them. It
+ * falls back to smoothstep only when no route is supplied. The label pill
+ * sits BESIDE the line at its midpoint. On hover it emphasizes its own
+ * line (thicker, darker) so, when pills bunch up near a junction, you can
+ * tell which line a pill belongs to and which way it points. A click
+ * emits `connection-lens` so the canvas opens the connection lenses.
  *
  * Pending arrows (marching-ants, mid-pull) are non-interactive.
  */
@@ -38,10 +43,16 @@ export function LabeledEdge({
   ...rest
 }: EdgeProps) {
   const bus = useDiagramBus();
-  const nodes = useNodes();
   const [hover, setHover] = useState(false);
 
-  const [edgePath, labelX, labelY] = getSmoothStepPath({
+  // Draw the globally-routed waypoints directly (their endpoints are the
+  // handle centers, so they meet the handles). Fall back to smoothstep
+  // only when the canvas could not route this edge.
+  const routedPath = (data as { routedPath?: Pt[] | null } | undefined)
+    ?.routedPath;
+  const points = routedPath && routedPath.length >= 2 ? routedPath : null;
+
+  const fallback = getSmoothStepPath({
     sourceX,
     sourceY,
     sourcePosition,
@@ -49,22 +60,17 @@ export function LabeledEdge({
     targetY,
     targetPosition,
   });
-
-  // A long edge spanning ranks runs straight through an intermediate
-  // block; if the midpoint lands on a block, push the label below it.
-  let lx = labelX;
-  let ly = labelY;
-  for (const n of nodes) {
-    if (n.type !== "block") continue;
-    const nx = n.position.x;
-    const ny = n.position.y;
-    const nh =
-      (n as { measured?: { height?: number } }).measured?.height ?? NODE_H;
-    if (lx > nx - 6 && lx < nx + NODE_W + 6 && ly > ny - 6 && ly < ny + nh + 6) {
-      ly = ny + nh + 14;
-      break;
-    }
-  }
+  const edgePath = points ? pointsToPath(points) : fallback[0];
+  const anchor = points
+    ? pathLabelAnchor(points)
+    : {
+        x: fallback[1],
+        y: fallback[2],
+        vertical: Math.abs(targetY - sourceY) >= Math.abs(targetX - sourceX),
+      };
+  const lx = anchor.x;
+  const ly = anchor.y;
+  const vertical = anchor.vertical;
 
   const className = (rest as { className?: string }).className;
   const recent = (data as { recent?: boolean } | undefined)?.recent === true;
@@ -76,11 +82,9 @@ export function LabeledEdge({
   const verb = typeof label === "string" ? label : "";
   const interactive = !!verb && !pending && !dimmed;
 
-  // Place the pill BESIDE its line, not over it. For a vertical edge the
-  // line is vertical at the midpoint, so anchor the pill's left edge just
-  // to the right of it; for a horizontal edge, sit it just above the line.
-  const vertical =
-    Math.abs(targetY - sourceY) >= Math.abs(targetX - sourceX);
+  // Place the pill BESIDE its line, not over it. For a vertical segment
+  // anchor the pill just to the right of the line; for a horizontal one,
+  // sit it just above. `vertical` is the orientation at the path midpoint.
   const labelTransform = vertical
     ? `translate(8px, -50%) translate(${lx}px, ${ly}px)`
     : `translate(-50%, -118%) translate(${lx}px, ${ly}px)`;

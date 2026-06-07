@@ -20,6 +20,7 @@ import type {
   DiagramSchema,
 } from "../types";
 import { NODE_H, NODE_W, PROX } from "./constants";
+import { assignEdgeHandles } from "./edgeHandles";
 
 /**
  * Approximate the expanded height of a selected block so dagre can
@@ -327,34 +328,25 @@ export function layoutSchema(
     }
   }
 
-  for (const a of schema.arrows) {
-    if (!allBlockIds.has(a.from) || !allBlockIds.has(a.to)) continue;
+  // Distribute handles per block so DIFFERENT arrows touching the same
+  // block land on DIFFERENT sides (not stacked on one anchor). Done as a
+  // global pass over all renderable arrows, in array order, so a freshly
+  // appended pending arrow avoids sides already used by existing arrows.
+  const renderArrows = schema.arrows.filter(
+    (a) => allBlockIds.has(a.from) && allBlockIds.has(a.to),
+  );
+  const handlePairs = assignEdgeHandles(renderArrows, (id) => {
+    const p = posMap.get(id);
+    return p ? { x: p.x + NODE_W / 2, y: p.y + NODE_H / 2 } : undefined;
+  });
+
+  renderArrows.forEach((a, i) => {
     const finalLabel = labelOverride.has(a)
       ? labelOverride.get(a)!
       : a.label;
     const dim = hasFocus && !(focusedSet.has(a.from) || focusedSet.has(a.to));
     const isPending = a.pending !== undefined;
-    // Attach each end to the side of the block facing the other, by the
-    // dominant direction between them: a mostly-horizontal edge exits the
-    // right (or left) side, a mostly-vertical edge exits the bottom (or
-    // top). Spreading across all four sides keeps an incoming and an
-    // outgoing edge at the SAME block from stacking on one handle and
-    // reading as a single (bidirectional) line.
-    const fromPos = posMap.get(a.from);
-    const toPos = posMap.get(a.to);
-    let sourceHandle = "b";
-    let targetHandle = "t";
-    if (fromPos && toPos) {
-      const dx = toPos.x - fromPos.x;
-      const dy = toPos.y - fromPos.y;
-      if (Math.abs(dx) > Math.abs(dy)) {
-        sourceHandle = dx > 0 ? "r" : "l";
-        targetHandle = dx > 0 ? "l" : "r";
-      } else {
-        sourceHandle = dy > 0 ? "b" : "t";
-        targetHandle = dy > 0 ? "t" : "b";
-      }
-    }
+    const { sourceHandle, targetHandle } = handlePairs[i];
     edges.push({
       id: `sem-${a.from}-${a.to}-${a.label}`,
       source: a.from,
@@ -374,11 +366,13 @@ export function layoutSchema(
         type: MarkerType.ArrowClosed,
         width: 16,
         height: 16,
-        color: isPending ? "#78716C" : "#666666",
+        // Pending edges are blue (the in-flight "edit" color, matching the
+        // block pulse); settled edges are neutral grey.
+        color: isPending ? "#3B5BD9" : "#666666",
       },
       style: isPending
         ? {
-            stroke: "#78716C",
+            stroke: "#3B5BD9",
             strokeWidth: 2,
             strokeDasharray: "8 6",
             opacity: 1,
@@ -389,7 +383,7 @@ export function layoutSchema(
             opacity: dim ? 0.2 : 1,
           },
     });
-  }
+  });
 
   return { nodes, edges };
 }

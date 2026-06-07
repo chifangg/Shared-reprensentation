@@ -13,7 +13,7 @@ export function EditSummaryToast({
   summary,
   onDismiss,
 }: {
-  summary: { files: string[]; text: string };
+  summary: { files: string[]; text: string; note?: string };
   onDismiss: () => void;
 }) {
   return (
@@ -51,6 +51,11 @@ export function EditSummaryToast({
       {summary.text && (
         <div className="text-[12px] leading-snug text-[#444444]">
           {summary.text}
+        </div>
+      )}
+      {summary.note && (
+        <div className="mt-1.5 rounded-md border border-[#E0C089] bg-[#FBF3DE] px-2 py-1 text-[11px] leading-snug text-[#8A6D1F]">
+          {summary.note}
         </div>
       )}
     </div>

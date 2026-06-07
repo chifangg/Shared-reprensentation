@@ -52,13 +52,15 @@ export function BlockNode({ data, selected }: NodeProps<Node<BlockNodeData>>) {
 
   const ring = data.isPending
     ? "pending-block-pulse"
-    : data.isRecentlyAdded
-      ? "recent-change-block"
-      : data.isFocused
-        ? "ring-[3px] ring-[#F59E0B] focus-pulse"
-        : selected
-          ? "ring-2 ring-[#78716C]/40 shadow-xl"
-          : "shadow-sm hover:shadow-md";
+    : data.isEditing
+      ? "pending-block-pulse"
+      : data.isRecentlyAdded
+        ? "recent-change-block"
+        : data.isFocused
+          ? "ring-[3px] ring-[#F59E0B] focus-pulse"
+          : selected
+            ? "ring-2 ring-[#78716C]/40 shadow-xl"
+            : "shadow-sm hover:shadow-md";
   const borderColor = data.isPending
     ? "border-2 border-dashed border-[#78716C] bg-[#F5F5F4]"
     : data.isContainer

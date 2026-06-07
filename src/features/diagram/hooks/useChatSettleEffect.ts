@@ -13,6 +13,8 @@ import type {
   FetchState,
 } from "../types";
 import { dlog } from "../util/debug";
+import { blocksForFiles } from "../util/editedBlocks";
+import { editedFilesInLatestTurn } from "../util/chatEdits";
 import type { EditSummary } from "./useEditSummary";
 import type { PreRegenSnapshot, RecentChanges } from "./useRecentChanges";
 
@@ -72,9 +74,11 @@ export function useChatSettleEffect({
   setState,
   chosenOptionsRef,
   preRegenSnapshotRef,
+  preserveRegenRef,
   setRetryNonce,
   setRecentChanges,
   setEditSummary,
+  setEditRegenIds,
 }: {
   chatRunning: boolean;
   chatMessages: ClaudeMessage[];
@@ -82,9 +86,15 @@ export function useChatSettleEffect({
   setState: Dispatch<SetStateAction<FetchState>>;
   chosenOptionsRef: MutableRefObject<Map<string, ChosenOption>>;
   preRegenSnapshotRef: MutableRefObject<PreRegenSnapshot | null>;
+  /** Flipped on here so the structure fetch keeps the old diagram up and
+   *  swaps only when the rebuild is ready (no blank during the regen). */
+  preserveRegenRef: MutableRefObject<{ active: boolean }>;
   setRetryNonce: Dispatch<SetStateAction<number>>;
   setRecentChanges: Dispatch<SetStateAction<RecentChanges | null>>;
   setEditSummary: Dispatch<SetStateAction<EditSummary | null>>;
+  /** Blocks to pulse blue THROUGH the regen window (chat already ended,
+   *  so the chatRunning-based pulse has cleared). Cleared on ready. */
+  setEditRegenIds: Dispatch<SetStateAction<Set<string>>>;
 }): void {
   const prevChatRunningRef = useRef(false);
   useEffect(() => {
@@ -120,6 +130,18 @@ export function useChatSettleEffect({
       const hadArrowExecute = arrowEntries.length > 0;
       const hadBlockOrNewBlockExecute = blockOrNewBlockEntries.length > 0;
 
+      // Walk the just-finished assistant turn ONCE for the file paths it
+      // edited + its trailing prose. Drives three things below: the regen
+      // decision, the "what changed" toast, and the set of blocks to glow
+      // (the block that owns an edited file, even on an in-place edit).
+      const { files: editedFileList, textChunks } =
+        editedFilesInLatestTurn(chatMessages);
+      const editedFiles = new Set(editedFileList);
+      const editedBlockIds =
+        state.kind === "ready"
+          ? blocksForFiles(state.schema.blocks, editedFiles)
+          : new Set<string>();
+
       // Collect IDs / arrow keys of EVERYTHING that just settled in
       // this transition so we can flag them in recentChanges (solid
       // blue until the user takes their next action).
@@ -132,6 +154,10 @@ export function useChatSettleEffect({
       // grey even though we just settled stuff.
       const settledBlockIds = new Set<string>();
       const settledArrowKeys = new Set<string>();
+      // User-drawn arrows that got dropped this turn because the chosen
+      // outcome was NOT a block-level relationship. Surfaced as a toast
+      // note so the line doesn't just silently vanish.
+      const droppedUserArrows: Array<{ from: string; to: string }> = [];
       let nextBlocks =
         state.kind === "ready" ? state.schema.blocks : null;
       let nextArrows =
@@ -171,8 +197,14 @@ export function useChatSettleEffect({
                 label: opt.label?.trim() || "uses",
                 pending: undefined,
               });
+            } else if (a.pending) {
+              // detail / none on a user-drawn arrow: the edit ran but no
+              // block-level relationship resulted, so the arrow drops.
+              // Record it so we can TELL the user rather than silently
+              // removing their line.
+              droppedUserArrows.push({ from: a.from, to: a.to });
             }
-            // detail / none → drop the arrow (don't push)
+            // (a settled non-pending detail/none arrow drops silently)
           }
           nextArrows = built;
           schemaChanged = true;
@@ -240,62 +272,23 @@ export function useChatSettleEffect({
       // when the turn was a card-driven (arrow / block / new-block)
       // execute — those already settled their target locally above
       // and regen would destroy the rest of the user's spatial layout.
-      let shouldRegen = false;
-      const walkLog: Array<{
-        idx: number;
-        type: unknown;
-        toolNames: string[];
-        contentKind: string;
-      }> = [];
-      if (!hadArrowExecute && !hadBlockOrNewBlockExecute) {
-        for (let i = chatMessages.length - 1; i >= 0; i--) {
-          const m = chatMessages[i] as {
-            type?: string;
-            message?: { content?: unknown };
-          };
-          const content = m.message?.content;
-          const toolNames: string[] = [];
-          if (Array.isArray(content)) {
-            for (const b of content as Array<{
-              type?: string;
-              name?: string;
-            }>) {
-              if (b?.type === "tool_use" && b.name) toolNames.push(b.name);
-            }
-          }
-          walkLog.push({
-            idx: i,
-            type: m.type,
-            toolNames,
-            contentKind: Array.isArray(content) ? "array" : typeof content,
-          });
-          if (m.type === "user") break;
-          if (m.type !== "assistant") continue;
-          if (!Array.isArray(content)) continue;
-          for (const name of toolNames) {
-            if (
-              name === "edit_project_file" ||
-              name === "write_project_file"
-            ) {
-              shouldRegen = true;
-              break;
-            }
-          }
-          if (shouldRegen) break;
-        }
-      }
-      dlog("recent-debug:shouldRegen walk", {
+      const shouldRegen =
+        !hadArrowExecute &&
+        !hadBlockOrNewBlockExecute &&
+        editedFiles.size > 0;
+      dlog("recent-debug:shouldRegen", {
         hadArrowExecute,
         hadBlockOrNewBlockExecute,
         shouldRegen,
-        chatMessagesLength: chatMessages.length,
-        walk: walkLog,
+        editedFiles: Array.from(editedFiles),
+        editedBlockIds: Array.from(editedBlockIds),
       });
       if (shouldRegen) {
         chosen.clear();
         // Snapshot what's currently on screen so the next "ready"
         // transition can diff against it and glow whatever Claude
-        // added during this turn.
+        // added during this turn. editedBlockIds is carried so blocks
+        // edited IN PLACE (no new id) still glow after the regen.
         if (state.kind === "ready") {
           preRegenSnapshotRef.current = {
             blockIds: new Set(
@@ -308,46 +301,47 @@ export function useChatSettleEffect({
                 .filter((a) => !a.pending)
                 .map((a) => `${a.from}->${a.to}`),
             ),
+            editedBlockIds: new Set(editedBlockIds),
           };
         }
+        // Keep the old diagram visible through the rebuild and pulse the
+        // edited block(s) the whole time (the chatRunning-based pulse has
+        // already cleared since the turn ended).
+        preserveRegenRef.current.active = true;
+        setEditRegenIds(new Set(editedBlockIds));
         setState({ kind: "idle" });
         setRetryNonce((n) => n + 1);
       }
 
-      // Build the edit-summary toast from the just-finished assistant
-      // turn. Pulls all edit/write file paths + the last text block
-      // (with JSON fences stripped) so the user gets a quick "here's
-      // what just changed" without having to scroll the chat.
-      const editedFiles = new Set<string>();
-      const textChunks: string[] = [];
-      for (let i = chatMessages.length - 1; i >= 0; i--) {
-        const m = chatMessages[i] as {
-          type?: string;
-          message?: { content?: unknown };
-        };
-        if (m.type === "user") break;
-        if (m.type !== "assistant") continue;
-        const content = m.message?.content;
-        if (!Array.isArray(content)) continue;
-        for (const b of content as Array<{
-          type?: string;
-          name?: string;
-          input?: { path?: string };
-          text?: string;
-        }>) {
-          if (
-            b?.type === "tool_use" &&
-            (b.name === "edit_project_file" ||
-              b.name === "write_project_file") &&
-            typeof b.input?.path === "string"
-          ) {
-            editedFiles.add(b.input.path);
-          } else if (b?.type === "text" && typeof b.text === "string") {
-            textChunks.unshift(b.text);
-          }
-        }
+      // No-regen paths (card-driven execute): glow the edited block(s)
+      // right away so an in-place code change is still visible. For the
+      // regen path the snapshot above carries them instead.
+      if (!shouldRegen) {
+        for (const id of editedBlockIds) settledBlockIds.add(id);
       }
-      if (editedFiles.size > 0) {
+
+      // If a user-drawn arrow was dropped (no block-level relationship),
+      // build a plain-language note naming the two blocks so the user
+      // understands the edit ran but the link wasn't kept.
+      let droppedNote: string | undefined;
+      if (droppedUserArrows.length > 0 && state.kind === "ready") {
+        const labelOf = (id: string) =>
+          state.schema.blocks.find((b) => b.id === id)?.label ?? id;
+        const { from, to } = droppedUserArrows[0];
+        const more =
+          droppedUserArrows.length > 1
+            ? ` (and ${droppedUserArrows.length - 1} more)`
+            : "";
+        droppedNote = `Edit applied, but no direct link between "${labelOf(
+          from,
+        )}" and "${labelOf(to)}" resulted, so that connection was not kept${more}.`;
+      }
+
+      // Build the edit-summary toast from the precomputed edit paths +
+      // trailing prose (JSON fences stripped) so the user gets a quick
+      // "here's what just changed" without scrolling the chat. Fires when
+      // files changed OR a user connection was dropped (so the note shows).
+      if (editedFiles.size > 0 || droppedNote) {
         const fullText = textChunks.join("\n");
         const stripped = fullText
           .replace(/```(?:json)?\s*\n[\s\S]*?\n```/g, "")
@@ -359,6 +353,7 @@ export function useChatSettleEffect({
             firstParagraph.length > 220
               ? `${firstParagraph.slice(0, 217)}…`
               : firstParagraph,
+          note: droppedNote,
         });
       }
 

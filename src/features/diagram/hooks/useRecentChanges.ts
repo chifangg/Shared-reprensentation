@@ -16,6 +16,11 @@ export type RecentChanges = {
 export type PreRegenSnapshot = {
   blockIds: Set<string>;
   arrowKeys: Set<string>;
+  /** Ids of blocks whose FILES Claude edited this turn (even though the
+   *  block itself already existed). The post-regen diff only finds NEW
+   *  blocks, so these are carried separately and unioned in, so an
+   *  edit-in-place still glows the block that changed. */
+  editedBlockIds: Set<string>;
 };
 
 /**
@@ -58,6 +63,14 @@ export function useRecentChanges({
     for (const b of state.schema.blocks) {
       if (b.pending) continue;
       if (!snap.blockIds.has(b.id)) newBlockIds.add(b.id);
+    }
+    // Carry over blocks Claude edited in place (same id, existed before):
+    // the diff above can't see them, but the user still wants the block
+    // that changed to glow.
+    for (const id of snap.editedBlockIds) {
+      if (state.schema.blocks.some((b) => b.id === id && !b.pending)) {
+        newBlockIds.add(id);
+      }
     }
     const newArrowKeys = new Set<string>();
     for (const a of state.schema.arrows) {

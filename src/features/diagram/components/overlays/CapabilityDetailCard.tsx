@@ -137,24 +137,28 @@ export function CapabilityDetailCard({
     onConfirm(finalInstruction);
   };
 
-  // Anchor to the click, clamped into the viewport.
+  // Anchor to the click, clamped into the viewport. The card height is
+  // then capped to the space BELOW `top` so it never runs off the bottom
+  // (the preview can grow the body well past its old fixed guess), which
+  // is what hid the Apply button. The body scrolls; the footer stays put.
   const left = Math.max(
     16,
     Math.min(anchor.x + 16, window.innerWidth - CARD_W - 16),
   );
-  const top = Math.max(16, Math.min(anchor.y - 24, window.innerHeight - 360));
+  const top = Math.max(16, Math.min(anchor.y - 24, window.innerHeight - 240));
+  const maxHeight = window.innerHeight - top - 16;
 
   return (
     <>
       {/* Transparent dismiss layer. */}
       <div className="fixed inset-0 z-40" onClick={onClose} />
       <div
-        className="fixed z-50 rounded-xl border border-[#E7E2DA] bg-[#FCFBF9] shadow-xl"
-        style={{ left, top, width: CARD_W }}
+        className="fixed z-50 flex flex-col rounded-xl border border-[#E7E2DA] bg-[#FCFBF9] shadow-xl"
+        style={{ left, top, width: CARD_W, maxHeight }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-start gap-2 border-b border-[#EFEAE2] px-4 py-3">
+        <div className="flex shrink-0 items-start gap-2 border-b border-[#EFEAE2] px-4 py-3">
           <div className="min-w-0 flex-1">
             <div className="truncate text-[11px] uppercase tracking-wide text-[#999]">
               {blockLabel}
@@ -172,7 +176,7 @@ export function CapabilityDetailCard({
           </button>
         </div>
 
-        <div className="max-h-[460px] overflow-y-auto px-4 py-3">
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
           {phase === "loading" && (
             <div className="flex items-center gap-2 py-6 text-sm text-[#777]">
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -268,7 +272,7 @@ export function CapabilityDetailCard({
           phase === "previewing" ||
           phase === "preview" ||
           phase === "error") && (
-          <div className="flex items-center justify-end gap-2 border-t border-[#EFEAE2] px-4 py-2.5">
+          <div className="flex shrink-0 items-center justify-end gap-2 border-t border-[#EFEAE2] px-4 py-2.5">
             {phase === "preview" ? (
               <>
                 <button

@@ -3,6 +3,11 @@ import { useState, type Dispatch, type SetStateAction } from "react";
 export type EditSummary = {
   files: string[];
   text: string;
+  /** Optional notice shown when a user-drawn connection was NOT kept
+   *  because the edit established no direct relationship between the two
+   *  blocks. Lets the user understand why their line vanished instead of
+   *  it silently disappearing. */
+  note?: string;
 };
 
 /**

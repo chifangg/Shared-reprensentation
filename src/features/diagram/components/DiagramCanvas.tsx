@@ -39,6 +39,7 @@ import {
   type EditTarget,
 } from "../types";
 import { layoutSchema } from "../layout/layoutSchema";
+import { useEdgeRouting } from "../hooks/useEdgeRouting";
 import {
   composeExecuteDirectPrompt,
   composeExecuteOptionPrompt,
@@ -60,6 +61,7 @@ import {
 import { useCanvasFit } from "../hooks/useCanvasFit";
 import { useViewportFocusFit } from "../hooks/useViewportFocusFit";
 import { useBubbleFocus } from "../hooks/useBubbleFocus";
+import { useEditingBlocks } from "../hooks/useEditingBlocks";
 import {
   useDiagramBus,
   useDiagramBusSubscribe,
@@ -84,6 +86,10 @@ import { IntentSurvey } from "./overlays/IntentSurvey";
 import { SurveyPreparingOverlay } from "./overlays/SurveyPreparingOverlay";
 import { IntentChip } from "./overlays/IntentChip";
 import { DiagramFocusPanel } from "./panel/DiagramFocusPanel";
+
+/** Stable empty-blocks reference so useEditingBlocks' effect dep doesn't
+ *  change identity every render while no schema is ready. */
+const EMPTY_BLOCKS: DiagramBlock[] = [];
 
 export function DiagramCanvas({
   view,
@@ -142,6 +148,11 @@ function DiagramCanvasInner({
   // Snapshot of the schema captured just before each auto-regen so
   // useRecentChanges can diff and glow whatever Claude added.
   const preRegenSnapshotRef = useRef<PreRegenSnapshot | null>(null);
+  // While an edit-driven regen runs, keep the old diagram up + pulse the
+  // edited block(s) instead of blanking. The ref gates the fetch hook;
+  // editRegenIds drives the pulse and clears on the next ready.
+  const preserveRegenRef = useRef<{ active: boolean }>({ active: false });
+  const [editRegenIds, setEditRegenIds] = useState<Set<string>>(new Set());
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<BlockNodeData>>(
     [],
   );
@@ -198,7 +209,16 @@ function DiagramCanvasInner({
     selectedId,
     setNodes,
     setEdges,
+    preserveRegenRef,
   });
+
+  // Hand the edit pulse off to the post-regen glow: once the rebuild is
+  // ready, clear the through-regen pulse (recentChanges takes over).
+  useEffect(() => {
+    if (state.kind === "ready") {
+      setEditRegenIds((prev) => (prev.size === 0 ? prev : new Set()));
+    }
+  }, [state.kind]);
 
   // Adaptive focus lifecycle: debounced /api/diagram?view=focus on
   // each new user turn. Resets on projectKey.
@@ -216,6 +236,15 @@ function DiagramCanvasInner({
     preRegenSnapshotRef,
   });
   const { editSummary, setEditSummary } = useEditSummary();
+
+  // Live blue pulse on the block(s) whose files Claude is editing RIGHT
+  // NOW (turn in flight). Clears on settle, where recentChanges takes
+  // over with the persistent post-edit glow.
+  const editingBlockIds = useEditingBlocks({
+    chatRunning,
+    chatMessages,
+    blocks: state.kind === "ready" ? state.schema.blocks : EMPTY_BLOCKS,
+  });
 
   // Click-a-block-to-expand-bubbles state. Bubbles are derived from the
   // block's provenance.functions and rendered as fan-laid ReactFlow
@@ -263,18 +292,21 @@ function DiagramCanvasInner({
       : [...base, ...(bubbleNodes as unknown as Node<BlockNodeData>[])];
   }, [nodes, bubbleNodes, borrowOffsets, expandedBlockId]);
 
+  // Global obstacle-avoiding routing with lane separation (see hook).
+  const edgesWithRoutes = useEdgeRouting(nodes, edges);
+
   // Fade + de-activate every edge and its label while a fan is open, so
   // no line or label pill floats over the bubbles. `data.dimmed` lets
   // LabeledEdge drop the pill's opacity and pointer events; the path
   // dims via the style opacity. Restores the moment the fan collapses.
   const renderedEdges = useMemo<Edge[]>(() => {
-    if (expandedBlockId === null) return edges;
-    return edges.map((e) => ({
+    if (expandedBlockId === null) return edgesWithRoutes;
+    return edgesWithRoutes.map((e) => ({
       ...e,
       style: { ...e.style, opacity: 0.1, transition: "opacity 200ms ease" },
       data: { ...e.data, dimmed: true },
     }));
-  }, [edges, expandedBlockId]);
+  }, [edgesWithRoutes, expandedBlockId]);
 
 
   // Reset the small in-component state on USER-initiated project
@@ -501,7 +533,14 @@ function DiagramCanvasInner({
         from: source,
         to: target,
         label: "",
-        pending: "claude",
+        // "intent", NOT "claude": this arrow is the user's, awaiting the
+        // intent gate / suggestion pick. The settle effect's "settle
+        // leftover claude arrows" branch (which fires when the round-1
+        // suggestions turn ends, before the user has picked) only touches
+        // "claude" arrows, so keeping this "intent" leaves it blue-dashed
+        // THROUGH round-1 and the execute edit. It settles only when the
+        // execute turn completes (the arrow branch matches it by key).
+        pending: "intent",
       };
       opened = true;
       return {
@@ -622,11 +661,24 @@ function DiagramCanvasInner({
         const from = resolveId(a.from);
         const to = resolveId(a.to);
         if (!from || !to || from === to) continue;
-        const duplicate = prev.schema.arrows.some(
-          (x) => x.from === from && x.to === to,
+        // Skip an arrow if ANY arrow already connects this pair, in
+        // EITHER direction: a same-pair anti-parallel arrow (e.g. the
+        // user drew A->B and Claude proposes B->A) renders as a confusing
+        // "writes / writes" double line. One arrow per pair is enough.
+        const exists = prev.schema.arrows.some(
+          (x) =>
+            (x.from === from && x.to === to) ||
+            (x.from === to && x.to === from),
         );
-        if (duplicate) continue;
-        if (toAdd.some((x) => x.from === from && x.to === to)) continue;
+        if (exists) continue;
+        if (
+          toAdd.some(
+            (x) =>
+              (x.from === from && x.to === to) ||
+              (x.from === to && x.to === from),
+          )
+        )
+          continue;
         toAdd.push({
           from,
           to,
@@ -776,6 +828,8 @@ function DiagramCanvasInner({
             ...n.data,
             isRecentlyAdded:
               recentChanges?.blockIds.has(n.id) ?? false,
+            isEditing:
+              editingBlockIds.has(n.id) || editRegenIds.has(n.id),
             onLabelChange: (newLabel: string) =>
               handleRenameBlock(n.id, newLabel),
             onActions: () => handleBlockAction(n.id),
@@ -793,7 +847,13 @@ function DiagramCanvasInner({
       });
       return result;
     },
-    [handleRenameBlock, handleBlockAction, recentChanges],
+    [
+      handleRenameBlock,
+      handleBlockAction,
+      recentChanges,
+      editingBlockIds,
+      editRegenIds,
+    ],
   );
 
   /** Post-pass on layoutSchema's edges that tags any edge whose
@@ -818,7 +878,7 @@ function DiagramCanvasInner({
         // beats our `.recent-change-edge` CSS class on actual render
         // (inline style wins specificity even against !important in
         // some React Flow paths). Setting it here is the only sure
-        // way to get blue stroke on the recent edges.
+        // way to get the blue "just edited" stroke on the recent edges.
         return {
           ...e,
           className: e.className
@@ -826,9 +886,14 @@ function DiagramCanvasInner({
             : "recent-change-edge",
           style: {
             ...(e.style ?? {}),
-            stroke: "#78716C",
+            stroke: "#3B5BD9",
             strokeWidth: 2,
           },
+          // Recolor the arrowhead to match the blue stroke.
+          markerEnd:
+            e.markerEnd && typeof e.markerEnd === "object"
+              ? { ...e.markerEnd, color: "#3B5BD9" }
+              : e.markerEnd,
           data: { ...(e.data ?? {}), recent: true },
         };
       });
@@ -867,9 +932,11 @@ function DiagramCanvasInner({
     setState,
     chosenOptionsRef,
     preRegenSnapshotRef,
+    preserveRegenRef,
     setRetryNonce,
     setRecentChanges,
     setEditSummary,
+    setEditRegenIds,
   });
 
   // Adaptive focus lifecycle handled by useAdaptiveFocus above.
@@ -915,7 +982,7 @@ function DiagramCanvasInner({
       <div
         ref={canvasContainerRef}
         className={`relative h-full ${panelOpen ? "flex-1 min-w-0" : "w-full"} transition-opacity duration-300 ${
-          regenerating ? "opacity-60" : "opacity-100"
+          regenerating || editRegenIds.size > 0 ? "opacity-60" : "opacity-100"
         }`}
       >
         <ReactFlow

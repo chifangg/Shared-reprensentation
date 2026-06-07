@@ -321,6 +321,15 @@ button:focus-visible,
   z-index: 10 !important;
 }
 
+/* Edge-label pills must sit ABOVE blocks. React Flow renders the
+ * edge-label layer BELOW the node layer by default, so a pill that
+ * grazes a block's edge gets clipped behind it and reads as a label
+ * floating out of nowhere. Lifting the whole layer keeps every pill
+ * fully visible and clickable on top of the blocks it sits near. */
+.react-flow__edgelabel-renderer {
+  z-index: 11;
+}
+
 @keyframes loading-bar {
   0%   { transform: translateX(-100%); }
   50%  { transform: translateX(150%); }
@@ -493,11 +502,12 @@ button:focus-visible,
   box-shadow: 0 0 0 2px rgba(59, 91, 217, 0.25);
 }
 
-/* Recent-change style for an SVG edge path. Bumps stroke color +
- * width so a freshly-drawn arrow stays visibly blue against the
- * regular grey edges until dismissed. */
+/* Recent-change style for an SVG edge path. A freshly connected /
+ * edited arrow stays solid BLUE (the "just edited" color, matching the
+ * block ring) against the regular grey edges until the user's next
+ * action. Solid, not dashed: the edit is finished. */
 .recent-change-edge {
-  stroke: #78716C !important;
+  stroke: #3B5BD9 !important;
   stroke-width: 2 !important;
 }
 

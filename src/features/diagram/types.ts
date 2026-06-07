@@ -227,6 +227,10 @@ export type BlockNodeData = {
    *  just created it. Renders a one-shot blue glow that fades after
    *  ~3.5s so the user can see WHAT got added during the regen. */
   isRecentlyAdded: boolean;
+  /** Claude is editing a file this block owns RIGHT NOW (turn in flight).
+   *  Renders a live blue pulse. Injected by attachInteractive from
+   *  useEditingBlocks; absent on the pure layout output. */
+  isEditing?: boolean;
   /** Commit a new label. Triggers local schema update + slow-path chat
    *  message so Claude rewrites the corresponding code. */
   onLabelChange?: (newLabel: string) => void;
