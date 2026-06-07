@@ -6,10 +6,11 @@
  * useCanvasFit / useViewportFocusFit hooks). All the actual state +
  * effects + interactions live inside `DiagramCanvasInner` below.
  *
- * The inner component is still ~700 lines — most of that is the
- * handler callbacks (handleAddConnection, handleAddNewBlock, …) and
- * the JSX layout shell. Hooks own the heavy state machinery (fetch
- * lifecycles, settle effect, recent-changes diff, canvas fit).
+ * The inner component is now mostly wiring + the JSX layout shell.
+ * Hooks own the heavy machinery: fetch lifecycles, settle effect,
+ * recent-changes diff, canvas fit, the visual-edit / connection flow
+ * (useVisualEditHandlers), and the node/edge decoration + layout
+ * effects (useCanvasDecoration).
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -22,30 +23,18 @@ import {
   Controls,
   useNodesState,
   useEdgesState,
-  type Connection,
   type Edge,
   type Node,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useProject } from "@/core/project";
 import {
-  serializeTarget,
   type BlockNodeData,
-  type ConnectionOption,
   type DiagramArrow,
   type DiagramBlock,
-  type DiagramSchema,
   type DiagramView,
-  type EditTarget,
 } from "../types";
-import { layoutSchema } from "../layout/layoutSchema";
 import { useEdgeRouting } from "../hooks/useEdgeRouting";
-import {
-  composeExecuteDirectPrompt,
-  composeExecuteOptionPrompt,
-  composeRenamePrompt,
-  composeSuggestionsRound1Prompt,
-} from "../protocol/prompts";
 import { useDiagramStructureFetch } from "../hooks/useDiagramStructureFetch";
 import { useCapabilityScan } from "../hooks/useCapabilityScan";
 import { useAdaptiveFocus } from "../hooks/useAdaptiveFocus";
@@ -54,19 +43,14 @@ import {
   type PreRegenSnapshot,
 } from "../hooks/useRecentChanges";
 import { useEditSummary } from "../hooks/useEditSummary";
-import {
-  useChatSettleEffect,
-  type ChosenOption,
-} from "../hooks/useChatSettleEffect";
+import { useChatSettleEffect } from "../hooks/useChatSettleEffect";
 import { useCanvasFit } from "../hooks/useCanvasFit";
 import { useViewportFocusFit } from "../hooks/useViewportFocusFit";
 import { useBubbleFocus } from "../hooks/useBubbleFocus";
 import { useEditingBlocks } from "../hooks/useEditingBlocks";
-import {
-  useDiagramBus,
-  useDiagramBusSubscribe,
-} from "../protocol/bus";
-import { dlog, dwarn } from "../util/debug";
+import { useVisualEditHandlers } from "../hooks/useVisualEditHandlers";
+import { useCanvasDecoration } from "../hooks/useCanvasDecoration";
+import { useDiagramBus } from "../protocol/bus";
 import { nodeTypes } from "./nodes/BlockNode";
 import { edgeTypes } from "./nodes/LabeledEdge";
 import { ConnectionOptionsOverlay } from "./overlays/ConnectionOptionsOverlay";
@@ -123,24 +107,6 @@ function DiagramCanvasInner({
     arrows: DiagramArrow[];
   }>({ blocks: [], arrows: [] });
   const [panelWidth, setPanelWidth] = useState(380);
-  // Round-1 options Claude returned for the most-recent edit target
-  // (arrow, block, or new-block). Set by the OPTIONS_READY_EVENT
-  // listener (fired from ChatView once it parses the JSON). Cleared
-  // when the user picks a card or cancels. Drives the floating cards
-  // overlay on the canvas.
-  const [pendingOptions, setPendingOptions] = useState<{
-    target: EditTarget;
-    options: ConnectionOption[];
-  } | null>(null);
-  // First-stage gate for arrow / block / new-block flows: before
-  // anything is sent to chat, ask the user whether they want to
-  // describe the change themselves (skip suggestions round-trip) or
-  // ask Claude for suggestions (current cards flow). The visual side
-  // (pending arrow / placeholder block) is already on canvas by the
-  // time this state is set.
-  const [intentGate, setIntentGate] = useState<{
-    target: EditTarget;
-  } | null>(null);
   // Bubble drill-in editors (per-function detail card + per-surface
   // appearance card). State, click-routing, and reset live in the hook;
   // this component only owns the code-write dispatch on confirm.
@@ -352,6 +318,19 @@ function DiagramCanvasInner({
     setEditSummary(null);
   }, []);
 
+  // Visual-edit / connection flow: pending-arrow + placeholder-block
+  // visuals, the intent gate, the suggestion cards, and the round-2
+  // execute dispatch. Owns the three bus subscribers and the
+  // chosenOptionsRef that useChatSettleEffect consumes below.
+  const visualEdit = useVisualEditHandlers({
+    state,
+    setState,
+    files,
+    bus,
+    dismissRecentEdit,
+    setSelectedId,
+  });
+
   const onNodeClick = useCallback(
     (evt: React.MouseEvent, node: Node) => {
       dismissRecentEdit();
@@ -368,41 +347,6 @@ function DiagramCanvasInner({
     [dismissRecentEdit, toggleBubbleBlock, bubbleEdit],
   );
 
-  /**
-   * User asked to add a new module (clicked "+" or double-clicked the
-   * empty canvas). We:
-   *   1. Add a dashed-border placeholder block to the schema RIGHT NOW
-   *      so the user gets immediate visual feedback ("yes I heard you,
-   *      something is happening"). The placeholder lives in schema with
-   *      pending=true and a generated id; auto-regen after Claude
-   *      finishes will wipe it and surface the real block(s) instead.
-   *   2. Open the intent gate so they can pick describe vs ask.
-   */
-  const handleAddNewBlock = useCallback(() => {
-    if (state.kind !== "ready") return;
-    dismissRecentEdit();
-    const placeholderId = `__pending_new_${Date.now()}`;
-    setState((prev) => {
-      if (prev.kind !== "ready") return prev;
-      const placeholder: DiagramBlock = {
-        id: placeholderId,
-        label: "New module…",
-        caption: "Waiting for you to describe it or pick a suggestion.",
-        parent: null,
-        provenance: { files: [], functions: [] },
-        pending: true,
-      };
-      return {
-        kind: "ready",
-        schema: {
-          blocks: [...prev.schema.blocks, placeholder],
-          arrows: prev.schema.arrows,
-        },
-      };
-    });
-    setIntentGate({ target: { kind: "new-block" } });
-  }, [state, dismissRecentEdit]);
-
   // Detect double-click on the empty canvas (no built-in handler in
   // React Flow for this on the pane). Two onPaneClick events within
   // 300ms => add-new-block. A single click still deselects as before.
@@ -411,517 +355,14 @@ function DiagramCanvasInner({
     const now = Date.now();
     if (now - lastPaneClickRef.current < 300) {
       lastPaneClickRef.current = 0;
-      handleAddNewBlock();
+      visualEdit.handleAddNewBlock();
       return;
     }
     lastPaneClickRef.current = now;
     dismissRecentEdit();
     setSelectedId(null);
     clearBubbles();
-  }, [handleAddNewBlock, dismissRecentEdit, clearBubbles]);
-
-  /**
-   * Commit a visual rename: update the local diagram schema so the
-   * label change shows up immediately, then fire a chat prompt so
-   * Claude rewrites the corresponding identifier(s) in source. This
-   * is the slow-path side of the bidirectional loop — visual edit
-   * shows up in chat as a user turn, Claude responds with edits, the
-   * diff card renders in chat, code panel reflects the change.
-   *
-   * No-op if there's no diagram yet (state isn't "ready"), or if the
-   * label didn't actually change.
-   */
-  const handleRenameBlock = useCallback(
-    (blockId: string, newLabel: string) => {
-      setState((prev) => {
-        if (prev.kind !== "ready") return prev;
-        const block = prev.schema.blocks.find((b) => b.id === blockId);
-        if (!block) return prev;
-        const oldLabel = block.label;
-        if (oldLabel === newLabel) return prev;
-
-        bus.emit("visual-edit", {
-          prompt: composeRenamePrompt(block, newLabel),
-          kind: "rename",
-        });
-
-        return {
-          kind: "ready",
-          schema: {
-            blocks: prev.schema.blocks.map((b) =>
-              b.id === blockId ? { ...b, label: newLabel } : b,
-            ),
-            arrows: prev.schema.arrows,
-          },
-        };
-      });
-    },
-    [setState],
-  );
-
-  /**
-   * "Ask Claude for suggestions" path (round-1). Dispatches a prompt
-   * asking Claude to list ≤5 options as JSON. The chat-side cards
-   * renderer will surface them as canvas cards via OPTIONS_READY_EVENT.
-   * No code change in this round.
-   */
-  const dispatchSuggestionsRound1 = useCallback(
-    (target: EditTarget) => {
-      if (state.kind !== "ready") return;
-      bus.emit("visual-edit", {
-        prompt: composeSuggestionsRound1Prompt(target, state.schema),
-        kind: "suggestions-round1",
-      });
-    },
-    [state, bus],
-  );
-
-  /**
-   * "Describe yourself" path: skip round-1 and go straight to a
-   * round-2 execute, packing the user's free-text description as the
-   * intent. Also fires OPTION_EXECUTED_EVENT with a synthesized option
-   * (kind=detail) so the chatRunning settle effect knows what to do
-   * with any pending arrow / placeholder block (default: drop arrow,
-   * let auto-regen pick up real outcomes).
-   */
-  const dispatchExecuteDirect = useCallback(
-    (target: EditTarget, userText: string) => {
-      if (state.kind !== "ready") return;
-      const trimmed = userText.trim();
-      const synthOption: ConnectionOption = {
-        title: trimmed.length > 60 ? `${trimmed.slice(0, 57)}…` : trimmed,
-        detail: "User-described change.",
-        kind: "detail",
-      };
-      bus.emit("option-executed", { target, option: synthOption });
-      bus.emit("visual-edit", {
-        prompt: composeExecuteDirectPrompt(
-          target,
-          state.schema,
-          files,
-          trimmed,
-          synthOption.title,
-        ),
-        kind: "execute-direct",
-      });
-    },
-    [state, files, bus],
-  );
-
-  /**
-   * User dropped a new arrow. Add it to the schema with pending="claude"
-   * (marching-ants) AND open the intent gate so they can pick whether
-   * to describe the change themselves or have Claude suggest options.
-   * No chat dispatch until the gate closes.
-   */
-  const handleAddConnection = useCallback((connection: Connection) => {
-    const { source, target } = connection;
-    if (!source || !target) return;
-    if (source === target) return;
-    dismissRecentEdit();
-    let opened = false;
-    setState((prev) => {
-      if (prev.kind !== "ready") return prev;
-      const fromBlock = prev.schema.blocks.find((b) => b.id === source);
-      const toBlock = prev.schema.blocks.find((b) => b.id === target);
-      if (!fromBlock || !toBlock) return prev;
-      const duplicate = prev.schema.arrows.some(
-        (a) => a.from === source && a.to === target,
-      );
-      if (duplicate) return prev;
-      const newArrow: DiagramArrow = {
-        from: source,
-        to: target,
-        label: "",
-        // "intent", NOT "claude": this arrow is the user's, awaiting the
-        // intent gate / suggestion pick. The settle effect's "settle
-        // leftover claude arrows" branch (which fires when the round-1
-        // suggestions turn ends, before the user has picked) only touches
-        // "claude" arrows, so keeping this "intent" leaves it blue-dashed
-        // THROUGH round-1 and the execute edit. It settles only when the
-        // execute turn completes (the arrow branch matches it by key).
-        pending: "intent",
-      };
-      opened = true;
-      return {
-        kind: "ready",
-        schema: {
-          blocks: prev.schema.blocks,
-          arrows: [...prev.schema.arrows, newArrow],
-        },
-      };
-    });
-    if (opened) {
-      setIntentGate({ target: { kind: "arrow", from: source, to: target } });
-    }
-  }, [dismissRecentEdit]);
-
-  /**
-   * Round 2: chat-side card click fires OPTION_EXECUTED_EVENT. We
-   * store the winning option keyed by arrow id; once chatRunning
-   * transitions to false (the execute turn finishes), the dedicated
-   * effect below applies the outcome — label the arrow or drop it.
-   */
-  const chosenOptionsRef = useRef(
-    new Map<string, ChosenOption>(), // key = serializeTarget(target)
-  );
-  useDiagramBusSubscribe("option-executed", (detail) => {
-    if (!detail) return;
-    chosenOptionsRef.current.set(serializeTarget(detail.target), {
-      target: detail.target,
-      option: detail.option,
-    });
-
-    // For new-block: rename the next unclaimed placeholder eagerly so
-    // any arrows-added Claude emits during this turn can resolve its
-    // label. Without this, the placeholder stays "New module…" until
-    // the chatRunning settle runs (after Claude is fully done), so any
-    // mid-stream arrows-added → resolveId silently drops every arrow
-    // pointing at the new block. We keep `pending: true` so the dashed
-    // border still signals "Claude is implementing this".
-    if (detail.target.kind === "new-block") {
-      setState((prev) => {
-        if (prev.kind !== "ready") return prev;
-        let claimed = false;
-        const nextBlocks = prev.schema.blocks.map((b) => {
-          if (claimed) return b;
-          if (!b.pending || !b.id.startsWith("__pending_new_")) return b;
-          if (b.label !== "New module…") return b;
-          claimed = true;
-          return {
-            ...b,
-            label: detail.option.title.slice(0, 40),
-            caption: detail.option.detail.slice(0, 200) || b.caption,
-          };
-        });
-        if (!claimed) return prev;
-        return {
-          kind: "ready",
-          schema: { blocks: nextBlocks, arrows: prev.schema.arrows },
-        };
-      });
-    }
-  });
-
-  /**
-   * Receive parsed round-1 options from ChatView and surface them as
-   * a floating cards overlay on the canvas. Also clears any stale
-   * chosen-option for the same target — this catches the case where
-   * the user took the "Describe yourself" path with vague text and
-   * Claude bailed out with options instead of executing (we'd have
-   * pre-fired OPTION_EXECUTED_EVENT optimistically; cancel it).
-   */
-  useDiagramBusSubscribe("options-ready", (detail) => {
-    if (!detail) return;
-    chosenOptionsRef.current.delete(serializeTarget(detail.target));
-    setPendingOptions({ target: detail.target, options: detail.options });
-  });
-
-  /**
-   * ChatView dispatches this when Claude's response includes a trailing
-   * `added_arrows` JSON block. We resolve block labels → ids against
-   * the current schema and append arrows with pending="claude" so they
-   * render with marching-ants until the chatRunning settle. Duplicates
-   * (same from→to direction) and unresolved labels are silently
-   * dropped — Claude sometimes hallucinates labels.
-   */
-  useDiagramBusSubscribe("arrows-added", (detail) => {
-    if (!detail || detail.arrows.length === 0) return;
-    dlog("recent-debug:arrows-added handler", {
-      detailArrows: detail.arrows,
-    });
-    setState((prev) => {
-      if (prev.kind !== "ready") return prev;
-      const resolveId = (label: string): string | null => {
-        const lc = label.trim().toLowerCase();
-        const exact = prev.schema.blocks.find(
-          (b) => b.label.toLowerCase() === lc,
-        );
-        if (exact) return exact.id;
-        // Fuzzy: substring match either way.
-        const fuzzy = prev.schema.blocks.find(
-          (b) =>
-            b.label.toLowerCase().includes(lc) ||
-            lc.includes(b.label.toLowerCase()),
-        );
-        if (!fuzzy) {
-          // Surface mismatches in dev — silently dropping arrows
-          // makes it impossible to tell whether Claude forgot to
-          // emit them vs. emitted wrong labels.
-          dwarn(
-            "diagram",
-            `added_arrows label "${label}" did not match any block. Existing labels:`,
-            prev.schema.blocks.map((b) => b.label),
-          );
-        }
-        return fuzzy?.id ?? null;
-      };
-      const toAdd: DiagramArrow[] = [];
-      for (const a of detail.arrows) {
-        const from = resolveId(a.from);
-        const to = resolveId(a.to);
-        if (!from || !to || from === to) continue;
-        // Skip an arrow if ANY arrow already connects this pair, in
-        // EITHER direction: a same-pair anti-parallel arrow (e.g. the
-        // user drew A->B and Claude proposes B->A) renders as a confusing
-        // "writes / writes" double line. One arrow per pair is enough.
-        const exists = prev.schema.arrows.some(
-          (x) =>
-            (x.from === from && x.to === to) ||
-            (x.from === to && x.to === from),
-        );
-        if (exists) continue;
-        if (
-          toAdd.some(
-            (x) =>
-              (x.from === from && x.to === to) ||
-              (x.from === to && x.to === from),
-          )
-        )
-          continue;
-        toAdd.push({
-          from,
-          to,
-          label: a.label?.trim() || "uses",
-          pending: "claude",
-        });
-      }
-      if (toAdd.length === 0) return prev;
-      dlog("recent-debug:arrows-added applied", {
-        toAdd: toAdd.map((a) => `${a.from}->${a.to}(${a.label})`),
-      });
-      return {
-        kind: "ready",
-        schema: {
-          blocks: prev.schema.blocks,
-          arrows: [...prev.schema.arrows, ...toAdd],
-        },
-      };
-    });
-  });
-
-  /**
-   * User picked a card (or submitted "Others"). Fire OPTION_EXECUTED
-   * so the diagram's own listener captures the chosen option keyed by
-   * target; fire VISUAL_EDIT_EVENT to send the round-2 execute prompt;
-   * clear the overlay.
-   */
-  const handlePickOption = useCallback(
-    (option: ConnectionOption) => {
-      if (!pendingOptions) return;
-      if (state.kind !== "ready") return;
-      const { target } = pendingOptions;
-
-      bus.emit("option-executed", { target, option });
-      bus.emit("visual-edit", {
-        prompt: composeExecuteOptionPrompt(
-          target,
-          state.schema,
-          files,
-          option,
-        ),
-        kind: "execute-option",
-      });
-      setPendingOptions(null);
-    },
-    [pendingOptions, state, files],
-  );
-
-  /** Strip any pending arrow / placeholder block tied to the target
-   *  out of the schema. Shared by "cancel intent gate" and "cancel
-   *  cards overlay" paths (both want the on-canvas placeholder gone). */
-  const removeTargetVisual = useCallback((target: EditTarget) => {
-    setState((prev) => {
-      if (prev.kind !== "ready") return prev;
-      if (target.kind === "arrow") {
-        const { from, to } = target;
-        return {
-          kind: "ready",
-          schema: {
-            blocks: prev.schema.blocks,
-            arrows: prev.schema.arrows.filter(
-              (a) => !(a.from === from && a.to === to && a.pending),
-            ),
-          },
-        };
-      }
-      if (target.kind === "new-block") {
-        return {
-          kind: "ready",
-          schema: {
-            blocks: prev.schema.blocks.filter((b) => !b.pending),
-            arrows: prev.schema.arrows,
-          },
-        };
-      }
-      return prev;
-    });
-  }, []);
-
-  /** "Cancel" on the cards overlay: clear the cards + drop any
-   *  on-canvas placeholder tied to the target. */
-  const handleCancelOptions = useCallback(() => {
-    if (!pendingOptions) return;
-    removeTargetVisual(pendingOptions.target);
-    setPendingOptions(null);
-  }, [pendingOptions, removeTargetVisual]);
-
-  /** Intent gate: user picked "Ask Claude for suggestions". Fire the
-   *  round-1 prompt; the cards UI will land in pendingOptions when
-   *  ChatView parses the response. */
-  const handleIntentGateAskSuggestions = useCallback(() => {
-    if (!intentGate) return;
-    dispatchSuggestionsRound1(intentGate.target);
-    setIntentGate(null);
-  }, [intentGate, dispatchSuggestionsRound1]);
-
-  /** Intent gate: user picked "Describe yourself" + submitted text.
-   *  Skip round-1 and dispatch a self-contained execute prompt. */
-  const handleIntentGateDescribe = useCallback(
-    (text: string) => {
-      if (!intentGate) return;
-      const trimmed = text.trim();
-      if (!trimmed) return;
-      dispatchExecuteDirect(intentGate.target, trimmed);
-      setIntentGate(null);
-    },
-    [intentGate, dispatchExecuteDirect],
-  );
-
-  /** Intent gate cancel: drop any on-canvas placeholder. */
-  const handleIntentGateCancel = useCallback(() => {
-    if (!intentGate) return;
-    removeTargetVisual(intentGate.target);
-    setIntentGate(null);
-  }, [intentGate, removeTargetVisual]);
-
-  /**
-   * Inject `onLabelChange` callbacks into nodes produced by
-   * `layoutSchema` (which is pure and doesn't know about component
-   * state). Only applied to post-stream layouts; during streaming the
-   * schema is mid-build so inline editing is disabled.
-   */
-  /**
-   * User clicked the "⋯" affordance on a block. Select the block (so
-   * the user gets visual feedback that "this is the block I'm acting
-   * on") and open the intent gate so they can pick describe vs ask.
-   */
-  const handleBlockAction = useCallback((blockId: string) => {
-    if (state.kind !== "ready") return;
-    if (!state.schema.blocks.some((b) => b.id === blockId)) return;
-    dismissRecentEdit();
-    setSelectedId(blockId);
-    setIntentGate({ target: { kind: "block", id: blockId } });
-  }, [state, dismissRecentEdit]);
-
-  const attachInteractive = useCallback(
-    (laidNodes: Node<BlockNodeData>[]) => {
-      const result = laidNodes.map((n) => {
-        const dragged = userPositionsRef.current.get(n.id);
-        return {
-          ...n,
-          // Honor a manual drag over the freshly computed dagre slot so
-          // relayouts (selection toggle, bubble open) don't yank the
-          // block back.
-          position: dragged ?? n.position,
-          data: {
-            ...n.data,
-            isRecentlyAdded:
-              recentChanges?.blockIds.has(n.id) ?? false,
-            isEditing:
-              editingBlockIds.has(n.id) || editRegenIds.has(n.id),
-            onLabelChange: (newLabel: string) =>
-              handleRenameBlock(n.id, newLabel),
-            onActions: () => handleBlockAction(n.id),
-          },
-        };
-      });
-      dlog("recent-debug:attachInteractive ran", {
-        recentChangesBlockIds: recentChanges
-          ? Array.from(recentChanges.blockIds)
-          : null,
-        nodeIds: result.map((n) => n.id),
-        highlightedNodeIds: result
-          .filter((n) => n.data.isRecentlyAdded)
-          .map((n) => n.id),
-      });
-      return result;
-    },
-    [
-      handleRenameBlock,
-      handleBlockAction,
-      recentChanges,
-      editingBlockIds,
-      editRegenIds,
-    ],
-  );
-
-  /** Post-pass on layoutSchema's edges that tags any edge whose
-   *  source/target pair landed in recentChanges with the
-   *  `recent-change-edge` class — solid blue stroke that persists
-   *  until the user takes their next action (dismissRecentEdit). */
-  const tagRecentEdges = useCallback(
-    (laidEdges: Edge[]) => {
-      if (!recentChanges || recentChanges.arrowKeys.size === 0) {
-        dlog("recent-debug:tagRecentEdges (no recent arrows)", {
-          recentChanges: recentChanges ? "non-null but empty" : "null",
-        });
-        return laidEdges;
-      }
-      const matched: string[] = [];
-      const result = laidEdges.map((e) => {
-        const key = `${e.source}->${e.target}`;
-        if (!recentChanges.arrowKeys.has(key)) return e;
-        matched.push(key);
-        // Override the inline style directly — layoutSchema puts a
-        // hard-coded `stroke: "#666666"` on every settled edge, which
-        // beats our `.recent-change-edge` CSS class on actual render
-        // (inline style wins specificity even against !important in
-        // some React Flow paths). Setting it here is the only sure
-        // way to get the blue "just edited" stroke on the recent edges.
-        return {
-          ...e,
-          className: e.className
-            ? `${e.className} recent-change-edge`
-            : "recent-change-edge",
-          style: {
-            ...(e.style ?? {}),
-            stroke: "#3B5BD9",
-            strokeWidth: 2,
-          },
-          // Recolor the arrowhead to match the blue stroke.
-          markerEnd:
-            e.markerEnd && typeof e.markerEnd === "object"
-              ? { ...e.markerEnd, color: "#3B5BD9" }
-              : e.markerEnd,
-          data: { ...(e.data ?? {}), recent: true },
-        };
-      });
-      dlog("recent-debug:tagRecentEdges ran", {
-        recentChangesArrowKeys: Array.from(recentChanges.arrowKeys),
-        laidEdges: laidEdges.map((e) => ({
-          id: e.id,
-          source: e.source,
-          target: e.target,
-          key: `${e.source}->${e.target}`,
-        })),
-        matched,
-      });
-      return result;
-    },
-    [recentChanges],
-  );
-
-  // Structure fetch lifecycle handled by useDiagramStructureFetch above.
-
-  // Re-layout when selection toggles, so dagre makes room for the
-  // expanded block and surrounding nodes glide via CSS transition.
-  useEffect(() => {
-    if (state.kind !== "ready") return;
-    const laid = layoutSchema(state.schema, selectedId);
-    setNodes(attachInteractive(laid.nodes));
-    setEdges(tagRecentEdges(laid.edges));
-  }, [selectedId, state, setNodes, setEdges, attachInteractive, tagRecentEdges]);
+  }, [visualEdit, dismissRecentEdit, clearBubbles]);
 
   // Diff-on-ready glow handled by useRecentChanges above.
   // Settle effect (arrow outcomes, regen, edit-summary) handled below.
@@ -930,7 +371,7 @@ function DiagramCanvasInner({
     chatMessages,
     state,
     setState,
-    chosenOptionsRef,
+    chosenOptionsRef: visualEdit.chosenOptionsRef,
     preRegenSnapshotRef,
     preserveRegenRef,
     setRetryNonce,
@@ -941,28 +382,25 @@ function DiagramCanvasInner({
 
   // Adaptive focus lifecycle handled by useAdaptiveFocus above.
 
-  // Re-render base canvas. Detail blocks live in the side panel by
-  // default; the user can promote individual ones into the main
-  // diagram and from then on they layout alongside base blocks.
-  useEffect(() => {
-    if (state.kind !== "ready") return;
-    const focusedIds =
-      view === "focus" && focused ? focused.ids : null;
-    const merged: DiagramSchema = {
-      blocks: [...state.schema.blocks, ...promoted.blocks],
-      arrows: [...state.schema.arrows, ...promoted.arrows],
-    };
-    const laid = layoutSchema(merged, selectedId, focusedIds);
-    dlog("recent-debug:base-canvas layout effect", {
-      schemaArrowKeys: state.schema.arrows.map(
-        (a) => `${a.from}->${a.to}(pending=${a.pending ?? "none"})`,
-      ),
-      laidEdgeKeys: laid.edges.map((e) => `${e.source}->${e.target}`),
-      recentChanges: null,
-    });
-    setNodes(attachInteractive(laid.nodes));
-    setEdges(tagRecentEdges(laid.edges));
-  }, [state, selectedId, focused, view, promoted, setNodes, setEdges, attachInteractive, tagRecentEdges]);
+  // Node + edge decoration post-pass (recent-change glow, editing
+  // pulse, per-node callbacks, user-drag overrides) + the two layout
+  // effects that feed it into React Flow (selection-toggle relayout +
+  // base-canvas re-render). Drives setNodes / setEdges directly.
+  useCanvasDecoration({
+    state,
+    selectedId,
+    focused,
+    view,
+    promoted,
+    setNodes,
+    setEdges,
+    recentChanges,
+    editingBlockIds,
+    editRegenIds,
+    handleRenameBlock: visualEdit.handleRenameBlock,
+    handleBlockAction: visualEdit.handleBlockAction,
+    userPositionsRef,
+  });
 
   // Camera pan to focused base block(s) when a focus delta arrives.
   useViewportFocusFit({ view, focused });
@@ -990,7 +428,7 @@ function DiagramCanvasInner({
           edges={renderedEdges}
           onNodesChange={handleNodesChange}
           onEdgesChange={onEdgesChange}
-          onConnect={handleAddConnection}
+          onConnect={visualEdit.handleAddConnection}
           onNodeClick={onNodeClick}
           onPaneClick={onPaneClick}
           nodeTypes={nodeTypes}
@@ -1023,27 +461,29 @@ function DiagramCanvasInner({
           nodes.length > 0 &&
           chatMessages.length === 0 &&
           !regenerating && <AdaptiveFocusBanner />}
-        {pendingOptions && state.kind === "ready" && (
+        {visualEdit.pendingOptions && state.kind === "ready" && (
           <ConnectionOptionsOverlay
-            target={pendingOptions.target}
-            options={pendingOptions.options}
+            target={visualEdit.pendingOptions.target}
+            options={visualEdit.pendingOptions.options}
             blocks={state.schema.blocks}
-            onPick={handlePickOption}
-            onCancel={handleCancelOptions}
+            onPick={visualEdit.handlePickOption}
+            onCancel={visualEdit.handleCancelOptions}
           />
         )}
-        {intentGate && state.kind === "ready" && (
+        {visualEdit.intentGate && state.kind === "ready" && (
           <IntentGate
-            target={intentGate.target}
+            target={visualEdit.intentGate.target}
             blocks={state.schema.blocks}
-            onAskSuggestions={handleIntentGateAskSuggestions}
-            onDescribe={handleIntentGateDescribe}
-            onCancel={handleIntentGateCancel}
+            onAskSuggestions={visualEdit.handleIntentGateAskSuggestions}
+            onDescribe={visualEdit.handleIntentGateDescribe}
+            onCancel={visualEdit.handleIntentGateCancel}
           />
         )}
-        {state.kind === "ready" && !pendingOptions && !intentGate && (
-          <AddNewBlockButton onClick={handleAddNewBlock} />
-        )}
+        {state.kind === "ready" &&
+          !visualEdit.pendingOptions &&
+          !visualEdit.intentGate && (
+            <AddNewBlockButton onClick={visualEdit.handleAddNewBlock} />
+          )}
         {state.kind === "ready" &&
           intentCtl.intent !== null &&
           !intentCtl.editingIntent &&
@@ -1098,7 +538,10 @@ function DiagramCanvasInner({
             detail={bubbleEdit.detail}
             onCloseDetail={bubbleEdit.closeDetail}
             onConfirmDetail={(blockId, instruction) => {
-              dispatchExecuteDirect({ kind: "block", id: blockId }, instruction);
+              visualEdit.dispatchExecuteDirect(
+                { kind: "block", id: blockId },
+                instruction,
+              );
               bubbleEdit.closeDetail();
               clearBubbles();
             }}
