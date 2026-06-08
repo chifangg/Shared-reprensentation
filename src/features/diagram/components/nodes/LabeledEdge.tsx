@@ -3,14 +3,17 @@ import {
   BaseEdge,
   EdgeLabelRenderer,
   getSmoothStepPath,
+  useNodes,
   type EdgeProps,
 } from "@xyflow/react";
+import { useChatContextDrag } from "@/core/chatContextDrag";
 import { useDiagramBus } from "../../protocol/bus";
 import {
   pathLabelAnchor,
   pointsToPath,
   type Pt,
 } from "../../layout/orthogonalRoute";
+import { linkContextItem } from "../../util/contextItem";
 
 /**
  * Custom React Flow edge renderer for a labeled, obstacle-avoiding arrow.
@@ -43,7 +46,18 @@ export function LabeledEdge({
   ...rest
 }: EdgeProps) {
   const bus = useDiagramBus();
+  const nodes = useNodes();
+  const { dragSourceProps } = useChatContextDrag();
   const [hover, setHover] = useState(false);
+
+  // Block labels for the two ends, so dragging the pill into chat reads
+  // "<from> -> <to>" rather than raw ids.
+  const labelOf = (nodeId: string) =>
+    (
+      nodes.find((n) => n.id === nodeId)?.data as
+        | { label?: string }
+        | undefined
+    )?.label ?? nodeId;
 
   // Draw the globally-routed waypoints directly (their endpoints are the
   // handle centers, so they meet the handles). Fall back to smoothstep
@@ -96,7 +110,7 @@ export function LabeledEdge({
       ? { ...style, stroke: "#2A2622", strokeWidth: 2.5 }
       : style;
 
-  const labelClass = `absolute select-none rounded-md border px-2 py-0.5 text-[11px] font-medium shadow-sm transition-colors ${
+  const labelClass = `nodrag nopan absolute select-none rounded-md border px-2 py-0.5 text-[11px] font-medium shadow-sm transition-colors ${
     recent
       ? "border-[#78716C] bg-[#F5F5F4] text-[#78716C]"
       : "border-[#D4D4D4] bg-white text-[#444444]"
@@ -124,10 +138,16 @@ export function LabeledEdge({
         fill="none"
         stroke="transparent"
         strokeWidth={18}
+        className={interactive ? "nopan nodrag" : undefined}
         style={{
           pointerEvents: interactive ? "stroke" : "none",
-          cursor: interactive ? "pointer" : "default",
+          cursor: interactive ? "grab" : "default",
         }}
+        {...(interactive
+          ? dragSourceProps(
+              linkContextItem(labelOf(source), labelOf(target), verb),
+            )
+          : {})}
         onMouseEnter={() => setHover(true)}
         onMouseLeave={() => setHover(false)}
         onClick={
@@ -149,6 +169,11 @@ export function LabeledEdge({
         <EdgeLabelRenderer>
           <div
             className={labelClass}
+            {...(interactive
+              ? dragSourceProps(
+                  linkContextItem(labelOf(source), labelOf(target), verb),
+                )
+              : {})}
             style={{
               transform: labelTransform,
               // Pop above nodes (~10), a touch higher while hovered so the
@@ -174,7 +199,11 @@ export function LabeledEdge({
                   }
                 : undefined
             }
-            title={interactive ? "See how this link works" : undefined}
+            title={
+              interactive
+                ? "Click to see how this link works · drag into chat as context"
+                : undefined
+            }
           >
             {label}
           </div>

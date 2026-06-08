@@ -497,9 +497,10 @@ button:focus-visible,
  * background so it's obvious-but-not-jarring; no animation, since the
  * marching-ants already conveyed "in flight" during generate. */
 .recent-change-block {
-  border-color: #78716C !important;
-  background-color: #F5F5F4 !important;
-  box-shadow: 0 0 0 2px rgba(59, 91, 217, 0.25);
+  border-color: #3B5BD9 !important;
+  box-shadow:
+    0 0 0 3px rgba(59, 91, 217, 0.20),
+    0 4px 16px rgba(59, 91, 217, 0.14);
 }
 
 /* Recent-change style for an SVG edge path. A freshly connected /

@@ -79,6 +79,7 @@ export function useChatSettleEffect({
   setRecentChanges,
   setEditSummary,
   setEditRegenIds,
+  setRefreshTargets,
 }: {
   chatRunning: boolean;
   chatMessages: ClaudeMessage[];
@@ -95,6 +96,10 @@ export function useChatSettleEffect({
   /** Blocks to pulse blue THROUGH the regen window (chat already ended,
    *  so the chatRunning-based pulse has cleared). Cleared on ready. */
   setEditRegenIds: Dispatch<SetStateAction<Set<string>>>;
+  /** Blocks to re-derive (caption + capabilities) after a NO-REGEN edit,
+   *  each with the extra files (newly created / edited this turn) to fold
+   *  into the re-scan and the block's provenance. Keyed by block id. */
+  setRefreshTargets: Dispatch<SetStateAction<Map<string, string[]>>>;
 }): void {
   const prevChatRunningRef = useRef(false);
   useEffect(() => {
@@ -257,6 +262,14 @@ export function useChatSettleEffect({
             });
             schemaChanged = true;
           }
+          // Glow the block the user actually clicked "..." on, so it
+          // lights up even when Claude edited a RELATED file owned by a
+          // different block (the file-changed blocks glow too, below).
+          for (const entry of blockOrNewBlockEntries) {
+            if (entry.target.kind === "block") {
+              settledBlockIds.add(entry.target.id);
+            }
+          }
           chosen.clear();
         }
       }
@@ -314,10 +327,27 @@ export function useChatSettleEffect({
       }
 
       // No-regen paths (card-driven execute): glow the edited block(s)
-      // right away so an in-place code change is still visible. For the
-      // regen path the snapshot above carries them instead.
+      // right away so an in-place code change is still visible, AND queue
+      // them for a capability/caption refresh so the bubbles + description
+      // reflect what just changed (no regen re-derives them otherwise).
+      // For the regen path the snapshot above carries the glow instead.
       if (!shouldRegen) {
         for (const id of editedBlockIds) settledBlockIds.add(id);
+        // Queue capability/caption refreshes. The block(s) the user
+        // clicked "..." on get THIS turn's edited/created files folded in
+        // (so a brand-new file like a new script surfaces as a new
+        // capability and joins that block's provenance); file-owner blocks
+        // just re-scan their own (now-updated) files.
+        const targets = new Map<string, string[]>();
+        for (const entry of blockOrNewBlockEntries) {
+          if (entry.target.kind === "block") {
+            targets.set(entry.target.id, Array.from(editedFiles));
+          }
+        }
+        for (const id of editedBlockIds) {
+          if (!targets.has(id)) targets.set(id, []);
+        }
+        if (targets.size > 0) setRefreshTargets(targets);
       }
 
       // If a user-drawn arrow was dropped (no block-level relationship),

@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from "react";
+import { X } from "lucide-react";
 import type {
   ConnectionOption,
   DiagramBlock,
@@ -92,44 +93,47 @@ export function ConnectionOptionsOverlay({
         onMouseDown={(e) => e.stopPropagation()}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="mb-4 flex items-start justify-between gap-3">
           <div>
-            <div className="text-[11px] uppercase tracking-wider text-[#78716C]">
+            <div className="text-[10.5px] font-medium uppercase tracking-[0.12em] text-[#B0A99E]">
               {headerEyebrow}
             </div>
-            <div className="mt-0.5 text-[14px] text-[#222222]">
+            <div className="mt-1 text-[16px] font-semibold leading-snug text-[#2A2622]">
               {headerLine}
             </div>
           </div>
           <button
             type="button"
             onClick={onCancel}
-            title="Cancel (remove arrow)"
-            className="rounded-md border border-[#D4D4D4] bg-white px-2 py-1 text-[12px] text-[#666666] hover:bg-[#FAFAFA]"
+            title="Cancel"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[#A8A29E] transition-colors hover:bg-[#F0EDE7] hover:text-[#57534E]"
           >
-            ✕
+            <X className="h-4 w-4" />
           </button>
         </div>
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {options.map((opt, i) => (
           <OptionCardButton key={i} option={opt} onClick={() => onPick(opt)} />
         ))}
         {/* "Others" card: expand to text input, submit free-form intent. */}
         <div
-          className={`flex flex-col items-start gap-1.5 rounded-lg border border-dashed border-[#D4D4D4] bg-[#FAFAFA] px-3 py-2 ${
-            othersExpanded ? "" : "cursor-pointer hover:bg-[#F5F5F4]"
+          className={`flex flex-col items-start gap-2 rounded-xl border border-dashed border-[#D8D2C8] bg-[#FBFAF8] p-3.5 transition-colors ${
+            othersExpanded
+              ? ""
+              : "cursor-pointer hover:border-[#C9B58E] hover:bg-[#F7F5F1]"
           }`}
           onClick={() => {
             if (!othersExpanded) setOthersExpanded(true);
           }}
         >
-          <div className="flex w-full items-center gap-2">
-            <span className="shrink-0 rounded border border-[#D4D4D4] px-1 py-px font-mono text-[9px] uppercase tracking-wider text-[#666666]">
-              others
-            </span>
-            <span className="text-sm font-medium text-[#222222]">
-              Something else…
-            </span>
+          <span
+            className="inline-flex items-center rounded-full px-2 py-0.5 text-[10.5px] font-semibold tracking-tight"
+            style={{ backgroundColor: "#F1F0ED", color: "#8C8780" }}
+          >
+            Custom
+          </span>
+          <div className="text-[14px] font-semibold leading-snug text-[#2A2622]">
+            Something else…
           </div>
           {othersExpanded ? (
             <>
@@ -148,7 +152,7 @@ export function ConnectionOptionsOverlay({
                   }
                 }}
                 placeholder="Describe what you want Claude to do for this arrow"
-                className="w-full rounded-md border border-[#D4D4D4] bg-white px-2 py-1 text-[12px] text-[#222222] outline-none focus:border-[#78716C]"
+                className="w-full rounded-lg border border-[#E2DCD0] bg-white px-2.5 py-1.5 text-[12px] text-[#2A2622] outline-none focus:border-[#C9B58E]"
               />
               <div className="flex w-full items-center justify-end gap-1.5">
                 <button
@@ -157,7 +161,7 @@ export function ConnectionOptionsOverlay({
                     setOthersExpanded(false);
                     setOtherText("");
                   }}
-                  className="rounded-md border border-[#D4D4D4] bg-white px-2 py-0.5 text-[11px] text-[#666666] hover:bg-[#FAFAFA]"
+                  className="rounded-lg px-2.5 py-1 text-[11px] text-[#857F75] hover:bg-[#F0EDE7]"
                 >
                   Cancel
                 </button>
@@ -165,14 +169,14 @@ export function ConnectionOptionsOverlay({
                   type="button"
                   onClick={submitOthers}
                   disabled={otherText.trim().length === 0}
-                  className="rounded-md bg-[#78716C] px-2.5 py-0.5 text-[11px] font-medium text-white shadow-sm hover:bg-[#57534E] disabled:cursor-not-allowed disabled:bg-[#9CA3AF]"
+                  className="rounded-lg bg-[#78716C] px-3 py-1 text-[11px] font-medium text-white shadow-sm transition-colors hover:bg-[#57534E] disabled:cursor-not-allowed disabled:bg-[#CFC8BC]"
                 >
-                  Send ↵
+                  Send
                 </button>
               </div>
             </>
           ) : (
-            <div className="text-xs text-[#666666]">
+            <div className="text-[12px] leading-snug text-[#857F75]">
               Describe a custom change in your own words.
             </div>
           )}

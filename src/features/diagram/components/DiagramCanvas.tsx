@@ -35,6 +35,7 @@ import {
   type DiagramView,
 } from "../types";
 import { useEdgeRouting } from "../hooks/useEdgeRouting";
+import { useBlockCapabilityRefresh } from "../hooks/useBlockCapabilityRefresh";
 import { useDiagramStructureFetch } from "../hooks/useDiagramStructureFetch";
 import { useCapabilityScan } from "../hooks/useCapabilityScan";
 import { useAdaptiveFocus } from "../hooks/useAdaptiveFocus";
@@ -50,7 +51,7 @@ import { useBubbleFocus } from "../hooks/useBubbleFocus";
 import { useEditingBlocks } from "../hooks/useEditingBlocks";
 import { useVisualEditHandlers } from "../hooks/useVisualEditHandlers";
 import { useCanvasDecoration } from "../hooks/useCanvasDecoration";
-import { useDiagramBus } from "../protocol/bus";
+import { useDiagramBus, useDiagramBusSubscribe } from "../protocol/bus";
 import { nodeTypes } from "./nodes/BlockNode";
 import { edgeTypes } from "./nodes/LabeledEdge";
 import { ConnectionOptionsOverlay } from "./overlays/ConnectionOptionsOverlay";
@@ -119,6 +120,12 @@ function DiagramCanvasInner({
   // editRegenIds drives the pulse and clears on the next ready.
   const preserveRegenRef = useRef<{ active: boolean }>({ active: false });
   const [editRegenIds, setEditRegenIds] = useState<Set<string>>(new Set());
+  // Blocks queued for an in-place capability/caption refresh after a
+  // no-regen edit (filled by the settle effect, drained by the hook).
+  // blockId -> extra files (created/edited this turn) to fold in.
+  const [refreshTargets, setRefreshTargets] = useState<Map<string, string[]>>(
+    new Map(),
+  );
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<BlockNodeData>>(
     [],
   );
@@ -206,11 +213,41 @@ function DiagramCanvasInner({
   // Live blue pulse on the block(s) whose files Claude is editing RIGHT
   // NOW (turn in flight). Clears on settle, where recentChanges takes
   // over with the persistent post-edit glow.
-  const editingBlockIds = useEditingBlocks({
+  const fileEditingBlockIds = useEditingBlocks({
     chatRunning,
     chatMessages,
     blocks: state.kind === "ready" ? state.schema.blocks : EMPTY_BLOCKS,
   });
+
+  // Block-level edits (the "..." cards flow) glow the TARGET block from
+  // the moment an option is executed through the whole turn, the same way
+  // a freshly-drawn arrow stays blue. The file-based pulse above only
+  // catches it once Claude actually writes a file (and after reading), so
+  // we mark the target explicitly here and clear it when the turn ends.
+  const [cardEditBlockIds, setCardEditBlockIds] = useState<Set<string>>(
+    new Set(),
+  );
+  useDiagramBusSubscribe("option-executed", (detail) => {
+    if (detail?.target.kind !== "block") return;
+    const id = detail.target.id;
+    setCardEditBlockIds((prev) =>
+      prev.has(id) ? prev : new Set(prev).add(id),
+    );
+  });
+  const prevChatRunningRef = useRef(chatRunning);
+  useEffect(() => {
+    if (prevChatRunningRef.current && !chatRunning) {
+      setCardEditBlockIds((prev) => (prev.size === 0 ? prev : new Set()));
+    }
+    prevChatRunningRef.current = chatRunning;
+  }, [chatRunning]);
+
+  const editingBlockIds = useMemo(() => {
+    if (cardEditBlockIds.size === 0) return fileEditingBlockIds;
+    const merged = new Set(fileEditingBlockIds);
+    for (const id of cardEditBlockIds) merged.add(id);
+    return merged;
+  }, [fileEditingBlockIds, cardEditBlockIds]);
 
   // Click-a-block-to-expand-bubbles state. Bubbles are derived from the
   // block's provenance.functions and rendered as fan-laid ReactFlow
@@ -333,10 +370,11 @@ function DiagramCanvasInner({
 
   const onNodeClick = useCallback(
     (evt: React.MouseEvent, node: Node) => {
-      dismissRecentEdit();
-      // Clicking a function bubble opens the drill-in edit card. The
-      // bubble carries its raw + humanized label and its parent block id
-      // (BubbleNodeData); we anchor the card at the click point.
+      // NOTE: do NOT dismiss the recent-change glow here. Expanding a
+      // block's bubbles / opening a bubble's detail is INSPECTION, not the
+      // user's next edit, so the "just edited" highlight must survive it
+      // (it clears only on a real next action: a new arrow / block edit /
+      // chat prompt).
       if (node.type === "bubble") {
         bubbleEdit.openFromBubble(node, evt);
         return;
@@ -344,7 +382,7 @@ function DiagramCanvasInner({
       setSelectedId((prev) => (prev === node.id ? null : node.id));
       toggleBubbleBlock(node.id);
     },
-    [dismissRecentEdit, toggleBubbleBlock, bubbleEdit],
+    [toggleBubbleBlock, bubbleEdit],
   );
 
   // Detect double-click on the empty canvas (no built-in handler in
@@ -359,10 +397,12 @@ function DiagramCanvasInner({
       return;
     }
     lastPaneClickRef.current = now;
-    dismissRecentEdit();
+    // Deselect / collapse bubbles is inspection, not a next edit, so keep
+    // the recent-change glow (add-new-block on double-click dismisses via
+    // its own handler).
     setSelectedId(null);
     clearBubbles();
-  }, [visualEdit, dismissRecentEdit, clearBubbles]);
+  }, [visualEdit, clearBubbles]);
 
   // Diff-on-ready glow handled by useRecentChanges above.
   // Settle effect (arrow outcomes, regen, edit-summary) handled below.
@@ -378,6 +418,17 @@ function DiagramCanvasInner({
     setRecentChanges,
     setEditSummary,
     setEditRegenIds,
+    setRefreshTargets,
+  });
+
+  // After a no-regen edit, re-derive the edited block(s)' caption +
+  // capabilities in place so the bubbles + description reflect the change.
+  useBlockCapabilityRefresh({
+    refreshTargets,
+    setRefreshTargets,
+    state,
+    setState,
+    files,
   });
 
   // Adaptive focus lifecycle handled by useAdaptiveFocus above.

@@ -1,7 +1,9 @@
 import { memo, type CSSProperties } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
+import { useChatContextDrag } from "@/core/chatContextDrag";
 import type { BubbleNodeData } from "../../types";
 import { BUBBLE_HALF_SIZE } from "../../layout/bubbleNodes";
+import { capabilityContextItem } from "../../util/contextItem";
 
 /**
  * One satellite in a block's drill-in fan: a round bubble surfacing a
@@ -19,6 +21,7 @@ import { BUBBLE_HALF_SIZE } from "../../layout/bubbleNodes";
  * keyframes in styles.css.
  */
 function FunctionBubbleImpl({ data }: NodeProps & { data: BubbleNodeData }) {
+  const { dragSourceProps } = useChatContextDrag();
   const animStyle = {
     "--enter-dx": `${data.enterDx}px`,
     "--enter-dy": `${data.enterDy}px`,
@@ -27,11 +30,14 @@ function FunctionBubbleImpl({ data }: NodeProps & { data: BubbleNodeData }) {
   } as CSSProperties;
   return (
     <div
-      className={`flex cursor-pointer items-center justify-center rounded-full border border-[#E8DDC4] bg-[#F5EFE0] text-center shadow-sm transition-colors hover:border-[#C9B58E] hover:bg-[#EFE5D0] ${
+      {...dragSourceProps(
+        capabilityContextItem(data.displayLabel, data.parentBlockLabel),
+      )}
+      className={`nodrag nopan flex cursor-grab items-center justify-center rounded-full border border-[#E8DDC4] bg-[#F5EFE0] text-center shadow-sm transition-colors hover:border-[#C9B58E] hover:bg-[#EFE5D0] active:cursor-grabbing ${
         data.isExiting ? "bubble-exit" : "bubble-enter"
       }`}
       style={animStyle}
-      title={data.label}
+      title={`${data.label}  (drag into chat as context)`}
     >
       <span className="line-clamp-4 break-words px-2 text-[10px] font-medium leading-[1.2] text-[#5C5040]">
         {data.displayLabel}

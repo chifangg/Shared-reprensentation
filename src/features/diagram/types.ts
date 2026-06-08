@@ -251,6 +251,9 @@ export type BubbleNodeData = {
    *  handler to dismiss the bubble cluster + restore the previous
    *  viewport when the user clicks a bubble back through the parent. */
   parentBlockId: string;
+  /** Label of the parent block, so dragging the bubble into chat can say
+   *  "capability X in block Y". */
+  parentBlockLabel: string;
   /** True while the cluster is animating OUT (user just collapsed it
    *  but bubbles are still in the DOM playing the exit animation). The
    *  bubble component branches its CSS animation class on this. */

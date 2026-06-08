@@ -9,12 +9,14 @@
 //!   - `handler`  — the `generate_diagram` HTTP handler itself plus the
 //!                  body/builder helpers it dispatches into.
 
+mod block_refresh;
 mod connection_detail;
 mod function_detail;
 mod handler;
 mod prompts;
 mod tools;
 
+pub use block_refresh::block_refresh;
 pub use connection_detail::connection_detail;
 pub use function_detail::function_detail;
 pub use handler::generate_diagram;

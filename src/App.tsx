@@ -1,5 +1,6 @@
 import { AppShell } from "@/core/components/AppShell";
 import { ProjectProvider } from "@/core/project";
+import { ChatContextDragProvider } from "@/core/chatContextDrag";
 import { DiagramBusProvider } from "@/features/diagram/protocol/bus";
 
 /**
@@ -25,7 +26,9 @@ export default function App() {
   return (
     <ProjectProvider>
       <DiagramBusProvider>
-        <AppShell />
+        <ChatContextDragProvider>
+          <AppShell />
+        </ChatContextDragProvider>
       </DiagramBusProvider>
     </ProjectProvider>
   );

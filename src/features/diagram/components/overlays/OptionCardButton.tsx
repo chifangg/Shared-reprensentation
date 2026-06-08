@@ -1,10 +1,20 @@
 import type { ConnectionOption } from "../../types";
 
 /**
- * Single card button inside ConnectionOptionsOverlay. Renders the
- * option's kind chip (block_level / detail / no change), title, and
- * a one-line detail. Calls onClick when the user picks it.
+ * Single card inside ConnectionOptionsOverlay: a soft kind pill, the
+ * option title, and a one-line detail. The kind reads as a quiet tinted
+ * pill (no monospace / uppercase / dotted label), so the picker looks
+ * designed rather than auto-generated.
  */
+const KIND_META: Record<
+  ConnectionOption["kind"],
+  { label: string; accent: string; tint: string }
+> = {
+  block_level: { label: "New link", accent: "#6E7F55", tint: "#EDF1E6" },
+  detail: { label: "Detail", accent: "#A56C2E", tint: "#F6ECDD" },
+  none: { label: "No change", accent: "#8C8780", tint: "#F1F0ED" },
+};
+
 export function OptionCardButton({
   option,
   onClick,
@@ -12,35 +22,27 @@ export function OptionCardButton({
   option: ConnectionOption;
   onClick: () => void;
 }) {
-  const kindStyles =
-    option.kind === "block_level"
-      ? "border-[#78716C]/40 text-[#78716C]"
-      : option.kind === "detail"
-        ? "border-[#A56C2E]/40 text-[#A56C2E]"
-        : "border-[#666666]/40 text-[#666666]";
-  const kindLabel =
-    option.kind === "block_level"
-      ? `link · ${option.label ?? "?"}`
-      : option.kind === "detail"
-        ? "detail"
-        : "no change";
+  const meta = KIND_META[option.kind] ?? KIND_META.detail;
   return (
     <button
       type="button"
       onClick={onClick}
-      className="flex flex-col items-start gap-1 rounded-lg border border-[#D4D4D4] bg-white px-3 py-2 text-left transition-colors hover:border-[#78716C]/40 hover:bg-[#F5F5F4]"
+      className="group flex flex-col items-start gap-2 rounded-xl border border-[#E7E2DA] bg-white p-3.5 text-left transition-all duration-150 hover:-translate-y-px hover:border-[#C9B58E] hover:shadow-[0_4px_14px_rgba(120,113,108,0.12)]"
     >
-      <div className="flex w-full items-center gap-2">
-        <span
-          className={`shrink-0 rounded border px-1 py-px font-mono text-[9px] uppercase tracking-wider ${kindStyles}`}
-        >
-          {kindLabel}
-        </span>
-        <span className="text-sm font-medium text-[#222222]">
-          {option.title}
-        </span>
+      <span
+        className="inline-flex items-center rounded-full px-2 py-0.5 text-[10.5px] font-semibold tracking-tight"
+        style={{ backgroundColor: meta.tint, color: meta.accent }}
+      >
+        {meta.label}
+      </span>
+      <div className="text-[14px] font-semibold leading-snug text-[#2A2622]">
+        {option.title}
       </div>
-      <div className="text-xs text-[#666666]">{option.detail}</div>
+      {option.detail && (
+        <div className="text-[12px] leading-snug text-[#857F75]">
+          {option.detail}
+        </div>
+      )}
     </button>
   );
 }

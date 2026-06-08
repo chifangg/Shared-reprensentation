@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
-import { MoreHorizontal } from "lucide-react";
+import { MoreHorizontal, Grip } from "lucide-react";
+import { useChatContextDrag } from "@/core/chatContextDrag";
 import type { BlockNodeData } from "../../types";
 import { NODE_H, NODE_W } from "../../layout/constants";
 import { categoryStyle } from "../../util/blockCategory";
+import { blockContextItem } from "../../util/contextItem";
 
 /**
  * Custom React Flow node renderer for a diagram block.
@@ -22,6 +24,7 @@ import { categoryStyle } from "../../util/blockCategory";
  *  - onActions: opens the block-level cards overlay.
  */
 export function BlockNode({ data, selected }: NodeProps<Node<BlockNodeData>>) {
+  const { dragSourceProps } = useChatContextDrag();
   const fileCount = data.files.length;
   const fnCount = data.functions.length;
   const capCount = data.capabilities?.length ?? 0;
@@ -110,6 +113,27 @@ export function BlockNode({ data, selected }: NodeProps<Node<BlockNodeData>>) {
           <MoreHorizontal className="h-3.5 w-3.5" strokeWidth={2} />
         </button>
       )}
+      {/* Drag grip (top-left) to pull this block into the chat as
+       *  context. HTML5 draggable + `nodrag` so React Flow does not start
+       *  a node-move; the chat panel's drop zone reads the payload. Only
+       *  visible on hover, so it does not affect the global layout. */}
+      <div
+        {...dragSourceProps(
+          blockContextItem({
+            label: data.label,
+            caption: data.caption,
+            files: data.files,
+            capabilities: data.capabilities,
+            category: data.category,
+          }),
+        )}
+        // Stop a stray tap on the grip from toggling the block's bubbles.
+        onClick={(e) => e.stopPropagation()}
+        title="Drag into chat as context"
+        className="nodrag nopan absolute -left-2.5 -top-2.5 z-10 flex h-6 w-6 cursor-grab items-center justify-center rounded-full border border-[#E2E0DC] bg-white/95 text-[#A8A29E] opacity-0 shadow-sm backdrop-blur-sm transition-all hover:scale-105 hover:text-[#78716C] active:cursor-grabbing group-hover/block:opacity-100"
+      >
+        <Grip className="h-3 w-3" strokeWidth={2} />
+      </div>
       {/* Four connection handles, one per side. All declared as
        *  type="source" — combined with ConnectionMode.Loose on the
        *  parent ReactFlow, each handle can act as either source or
@@ -209,8 +233,8 @@ export function BlockNode({ data, selected }: NodeProps<Node<BlockNodeData>>) {
               {drillCount}{" "}
               {capCount > 0
                 ? drillCount === 1
-                  ? "feature"
-                  : "features"
+                  ? "capability"
+                  : "capabilities"
                 : drillCount === 1
                   ? "fn"
                   : "fns"}

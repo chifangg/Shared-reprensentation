@@ -1,10 +1,17 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   useClaudeSession,
   type ClaudeMessage,
   type PendingToolCall,
 } from "@/core/hooks/useClaudeSession";
 import { PromptInput } from "@/core/components/PromptInput";
+import { ChatContextChip } from "@/core/components/ChatContextChip";
+import {
+  appendContextToPrompt,
+  extractAttachedContext,
+  type ChatContextItem,
+} from "@/core/chatContext";
+import { useChatContextDropZone } from "@/core/chatContextDrag";
 import { ThinkingBubble } from "@/core/components/ThinkingBubble";
 import { Markdown } from "@/core/components/Markdown";
 import {
@@ -68,6 +75,24 @@ export function ChatView({ model }: { model?: string }) {
       session.send(prompt);
     }
   };
+
+  // Context attachments dragged in from the diagram (blocks, capability
+  // bubbles, connections). Per-message: folded into the prompt on send,
+  // then cleared. The serialized block stays in the message (so the chat
+  // memory keeps it), but the input chips do not persist across turns.
+  const [contextItems, setContextItems] = useState<ChatContextItem[]>([]);
+
+  const handleUserSubmit = (text: string) => {
+    handleSend(appendContextToPrompt(text, contextItems));
+    setContextItems([]);
+  };
+
+  // Register the input area as a drop zone for the custom pointer drag.
+  const { ref: dropRef, dragging } = useChatContextDropZone((item) => {
+    setContextItems((prev) =>
+      prev.some((p) => p.id === item.id) ? prev : [...prev, item],
+    );
+  });
 
   // Bridge: diagram-side visual edits (e.g. inline-rename a block)
   // emit a "visual-edit" bus message carrying a pre-formatted prompt;
@@ -171,7 +196,17 @@ export function ChatView({ model }: { model?: string }) {
   }, [turns.length, session.pendingToolCalls.length, running]);
 
   return (
-    <div className="flex h-full w-full flex-col bg-[#0F0F0F] text-[#E5E5E5]">
+    <div
+      ref={dropRef}
+      className="relative flex h-full w-full flex-col bg-[#0F0F0F] text-[#E5E5E5]"
+    >
+      {dragging && (
+        <div className="pointer-events-none absolute inset-2 z-50 flex items-center justify-center rounded-xl border-2 border-dashed border-[#78716C]/70 bg-[#0F0F0F]/60 backdrop-blur-[1px]">
+          <span className="rounded-md bg-[#1A1A1A]/90 px-3 py-1.5 text-sm font-medium text-[#D6D3D1]">
+            Drop to add as context
+          </span>
+        </div>
+      )}
       <header className="flex h-11 items-center justify-between border-b border-[#2A2A2A] bg-[#1A1A1A] px-4">
         <div className="text-sm font-medium text-[#E5E5E5]">Chat</div>
         <button
@@ -232,10 +267,30 @@ export function ChatView({ model }: { model?: string }) {
       )}
 
       <PromptInput
-        onSubmit={handleSend}
+        onSubmit={handleUserSubmit}
         onCancel={session.cancel}
         disabled={running || !hasFiles}
         running={running}
+        attachments={
+          contextItems.length > 0 ? (
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {contextItems.map((it) => (
+                <ChatContextChip
+                  key={it.id}
+                  kind={it.kind}
+                  label={it.label}
+                  sublabel={it.sublabel}
+                  accent={it.accent}
+                  onRemove={() =>
+                    setContextItems((prev) =>
+                      prev.filter((p) => p.id !== it.id),
+                    )
+                  }
+                />
+              ))}
+            </div>
+          ) : null
+        }
       />
     </div>
   );
@@ -367,14 +422,29 @@ function TurnBubble({
         </div>
       );
     }
+    const { text: userText, items: ctxItems } = extractAttachedContext(
+      turn.text,
+    );
     return (
       <div className="rounded-lg border border-[#2A2A2A] bg-[#1A1A1A] px-4 py-3">
         <div className="mb-2 flex items-center gap-2">
           <Avatar role="user" />
           <span className="text-xs text-[#888888]">You</span>
         </div>
+        {ctxItems.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-1.5">
+            {ctxItems.map((c, i) => (
+              <ChatContextChip
+                key={i}
+                kind={c.kind}
+                label={c.label}
+                accent={c.accent}
+              />
+            ))}
+          </div>
+        )}
         <div className="whitespace-pre-wrap text-sm text-[#E5E5E5]">
-          {turn.text}
+          {userText}
         </div>
       </div>
     );

@@ -176,6 +176,12 @@ pub async fn create_web_server(
             "/api/connection-detail",
             axum::routing::post(crate::diagram::connection_detail),
         )
+        // Re-derive one block's caption + capabilities from its current
+        // source, after a block-level edit (no full regen).
+        .route(
+            "/api/block-refresh",
+            axum::routing::post(crate::diagram::block_refresh),
+        )
         // Internal: called by the tool-bridge subprocess via loopback only.
         // Protected by the per-spawn X-Tool-Bridge-Secret header.
         .route(
