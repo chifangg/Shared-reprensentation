@@ -17,6 +17,7 @@
  */
 
 import { useEffect, useMemo, useRef } from "react";
+import { ArrowRight } from "lucide-react";
 import type { ConnectionOption, EditTarget } from "../types";
 import { useDiagramBus } from "./bus";
 import { parseAddedArrowsBlock } from "./parsers";
@@ -85,10 +86,25 @@ export function OptionsHandoff({
     bus.emit("options-ready", { target, options });
   }, [optionsKey, target, options, bus]);
 
+  // Same material as the agent's other diagram actions (e.g. "refreshed a
+  // capability on X"): a sand-toned block recessed into the chat surface,
+  // pinned to the agent (left) side. Both are "the agent did something on
+  // the diagram", so they read as one family.
   return (
-    <div className="rounded-md border border-[#78716C]/30 bg-[#1A1A20] px-3 py-2 text-xs text-[#A8A29E]">
-      Please select your desired change from the canvas → {options.length}{" "}
-      suggestion{options.length === 1 ? "" : "s"} ready.
+    <div
+      className="inline-flex max-w-[92%] items-center gap-2.5 self-start rounded-[10px] bg-[#ECE1CB] px-3.5 py-2.5 text-[13px] leading-snug text-[#6E6353]"
+      style={{
+        boxShadow:
+          "inset 0 2px 5px rgba(120,98,55,0.22), inset 0 -1px 0 rgba(255,255,255,0.55)",
+      }}
+    >
+      <span>
+        <span className="font-medium text-[#544A36]">
+          {options.length} suggestion{options.length === 1 ? "" : "s"}
+        </span>{" "}
+        ready on the canvas
+      </span>
+      <ArrowRight size={14} className="shrink-0 text-[#9A8A66]" />
     </div>
   );
 }

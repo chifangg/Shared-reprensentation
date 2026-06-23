@@ -13,7 +13,12 @@ export function EditSummaryToast({
   summary,
   onDismiss,
 }: {
-  summary: { files: string[]; text: string; note?: string };
+  summary: {
+    files: string[];
+    text: string;
+    blocks?: string[];
+    note?: string;
+  };
   onDismiss: () => void;
 }) {
   return (
@@ -48,6 +53,19 @@ export function EditSummaryToast({
           </span>
         )}
       </div>
+      {summary.blocks && summary.blocks.length > 0 && (
+        <div className="mb-1.5 flex flex-wrap items-center gap-1 text-[11px] text-[#666666]">
+          <span className="text-[#999999]">Capabilities updated on</span>
+          {summary.blocks.map((b) => (
+            <span
+              key={b}
+              className="rounded-full bg-[#EFF1F7] px-2 py-0.5 text-[10.5px] font-medium text-[#3B5BD9]"
+            >
+              {b}
+            </span>
+          ))}
+        </div>
+      )}
       {summary.text && (
         <div className="text-[12px] leading-snug text-[#444444]">
           {summary.text}

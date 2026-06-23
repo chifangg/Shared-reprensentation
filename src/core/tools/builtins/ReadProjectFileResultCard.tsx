@@ -53,23 +53,14 @@ export function ReadProjectFileResultCard({ content }: ToolResultProps<Result>) 
     );
   }
 
-  const lines = content.content.split("\n").length;
+  // A read is a low-weight "agent looked at a file" event: one quiet
+  // ghost line with a read icon + the path. No line/byte counts, no
+  // truncation badge (the model still receives `truncated` in the
+  // tool_result payload; the chat stays clean).
   return (
-    <div className="inline-flex items-center gap-2 rounded-md border border-[#78716C]/25 bg-[#F5F5F4] px-3 py-1.5 text-xs text-[#78716C]">
-      <FileText className="h-3 w-3" strokeWidth={2} />
-      <span className="font-mono">{content.path}</span>
-      <span className="text-[#78716C]/60">·</span>
-      <span className="tabular-nums">
-        {lines} {lines === 1 ? "line" : "lines"} · {content.size} bytes
-      </span>
-      {content.truncated && (
-        <span
-          className="ml-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800"
-          title={`File is ${content.full_size ?? "?"} bytes; only the first ${content.size} returned`}
-        >
-          truncated · full {content.full_size} bytes
-        </span>
-      )}
+    <div className="inline-flex max-w-full items-center gap-1.5 text-[12px] text-[#9A9081]">
+      <FileText className="h-3.5 w-3.5 shrink-0 text-[#B3A998]" strokeWidth={2} />
+      <span className="truncate font-mono text-[#8A8175]">{content.path}</span>
     </div>
   );
 }

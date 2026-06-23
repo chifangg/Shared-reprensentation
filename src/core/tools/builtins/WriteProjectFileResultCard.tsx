@@ -44,21 +44,29 @@ export function WriteProjectFileResultCard({
   const Icon = content.created ? FilePlus : FilePen;
   const verb = content.created ? "Created" : "Edited";
 
+  // Cool-toned "code material" card, recessed into the warm chat surface
+  // so a code change reads as a different kind of thing than speech.
   return (
-    <div className="overflow-hidden rounded-md border border-[#E0E0E0] bg-white text-xs">
-      <header className="flex items-center gap-2 border-b border-[#E8E8E8] bg-[#FAFAFA] px-3 py-1.5">
-        <Icon className="h-3 w-3 text-[#78716C]" strokeWidth={2} />
-        <span className="font-medium text-[#78716C]">{verb}</span>
-        <span className="font-mono text-[#222222]">{content.path}</span>
+    <div
+      className="overflow-hidden rounded-[9px] bg-[#FBFAFC] text-xs"
+      style={{
+        boxShadow:
+          "inset 0 2px 5px rgba(70,80,100,0.13), inset 0 0 0 1px rgba(70,80,100,0.10)",
+      }}
+    >
+      <header className="flex items-center gap-2 border-b border-[#E6E8EC] bg-[#F2F3F6] px-3 py-1.5">
+        <Icon className="h-3 w-3 text-[#7A818C]" strokeWidth={2} />
+        <span className="font-medium text-[#5C6470]">{verb}</span>
+        <span className="font-mono text-[#3C424C]">{content.path}</span>
         <span className="ml-auto flex items-center gap-1.5 tabular-nums">
           {content.added > 0 && (
-            <span className="text-emerald-600">+{content.added}</span>
+            <span className="text-emerald-700">+{content.added}</span>
           )}
           {content.removed > 0 && (
             <span className="text-red-600">-{content.removed}</span>
           )}
           {content.added === 0 && content.removed === 0 && (
-            <span className="text-[#999999]">no changes</span>
+            <span className="text-[#99A0AB]">no changes</span>
           )}
         </span>
       </header>

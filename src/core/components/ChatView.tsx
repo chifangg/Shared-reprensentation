@@ -198,33 +198,33 @@ export function ChatView({ model }: { model?: string }) {
   return (
     <div
       ref={dropRef}
-      className="relative flex h-full w-full flex-col bg-[#0F0F0F] text-[#E5E5E5]"
+      className="relative flex h-full w-full flex-col bg-[#F7F3EB] text-[#2E2A25]"
     >
       {dragging && (
-        <div className="pointer-events-none absolute inset-2 z-50 flex items-center justify-center rounded-xl border-2 border-dashed border-[#78716C]/70 bg-[#0F0F0F]/60 backdrop-blur-[1px]">
-          <span className="rounded-md bg-[#1A1A1A]/90 px-3 py-1.5 text-sm font-medium text-[#D6D3D1]">
+        <div className="pointer-events-none absolute inset-2 z-50 flex items-center justify-center rounded-xl border-2 border-dashed border-[#B7AE9C] bg-[#F7F3EB]/70 backdrop-blur-[1px]">
+          <span className="rounded-md border border-[#E2DACB] bg-white/95 px-3 py-1.5 text-sm font-medium text-[#6E6457] shadow-sm">
             Drop to add as context
           </span>
         </div>
       )}
-      <header className="flex h-11 items-center justify-between border-b border-[#2A2A2A] bg-[#1A1A1A] px-4">
-        <div className="text-sm font-medium text-[#E5E5E5]">Chat</div>
+      <header className="flex h-11 items-center justify-between border-b border-[#E2DACB] bg-[#F0EADE] px-4">
+        <div className="text-sm font-medium text-[#2E2A25]">Chat</div>
         <button
           onClick={handleNewChat}
-          className="rounded-md border border-[#2A2A2A] bg-[#242424] px-2.5 py-1 text-xs text-[#AAAAAA] transition-colors hover:bg-[#2F2F2F] hover:text-[#E5E5E5]"
+          className="rounded-md border border-[#E2DACB] bg-white px-2.5 py-1 text-xs text-[#6E6457] transition-colors hover:bg-[#F5F0E6] hover:text-[#2E2A25]"
         >
           New chat
         </button>
       </header>
-      <div className="flex items-center gap-2 border-b border-[#1F1F1F] bg-[#141414] px-4 py-2 font-mono text-[11px] text-[#666666]">
+      <div className="flex items-center gap-2 border-b border-[#EAE3D6] bg-[#F4EEE2] px-4 py-2 font-mono text-[11px] text-[#A89E8E]">
         <span className="shrink-0">session {session.sessionId.slice(0, 8)}</span>
-        <span className="text-[#333333]">·</span>
+        <span className="text-[#CFC6B5]">·</span>
         <span className="shrink-0">
           {hasFiles ? `${files.length} files loaded` : "no project"}
         </span>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+      <div className="flex-1 overflow-y-auto px-3 py-4 space-y-4">
         {turns.length === 0 && !hasFiles && <NoProjectPrompt />}
         {turns.length === 0 && hasFiles && <ReadyPrompt />}
         {turns.map((t, idx) => {
@@ -254,14 +254,12 @@ export function ChatView({ model }: { model?: string }) {
             />
           );
         })}
-        {running && turns[turns.length - 1]?.role === "user" && (
-          <ThinkingBubble />
-        )}
+        {running && <ThinkingBubble />}
         <div ref={endRef} />
       </div>
 
       {session.error && (
-        <pre className="max-h-40 overflow-auto whitespace-pre-wrap border-t border-[#2A2A2A] bg-red-950/30 p-2 font-mono text-xs text-red-300">
+        <pre className="max-h-40 overflow-auto whitespace-pre-wrap border-t border-red-200 bg-red-50 p-2 font-mono text-xs text-red-700">
           {session.error}
         </pre>
       )}
@@ -367,14 +365,14 @@ function projectTurns(messages: ClaudeMessage[]): Turn[] {
 function Avatar({ role }: { role: "user" | "assistant" }) {
   if (role === "user") {
     return (
-      <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-[#2A2A2A] bg-[#242424] text-[#888888]">
-        <User size={12} />
+      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#2E2A25] text-[#EFE9DD]">
+        <User size={14} />
       </div>
     );
   }
   return (
-    <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-[#78716C]/30 bg-[#78716C]/15 text-[#A8A29E]">
-      <Bot size={12} />
+    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#EDE4D2] text-[#9A7E4E]">
+      <Bot size={14} />
     </div>
   );
 }
@@ -399,21 +397,31 @@ function TurnBubble({
 }) {
   if (turn.role === "user") {
     const visualEdit = parseVisualEditMessage(turn.text);
+    // User-initiated diagram action: a recessed warm-gray "record" block,
+    // pinned to the user's (right) side. Distinct material from a speech
+    // bubble: pressed into the surface, not floating.
     if (visualEdit) {
       return (
-        <div className="rounded-lg border border-[#78716C]/30 bg-[#1A1A20] px-4 py-2.5">
-          <div className="flex items-center gap-2">
-            <Sparkles size={12} className="text-[#A8A29E]" />
-            <span className="text-xs text-[#A8A29E]/80">diagram edit</span>
-            <span className="text-sm font-medium text-[#E5E5E5]">
+        <div className="flex justify-end">
+          <div
+            className="inline-flex max-w-[82%] flex-col gap-1 rounded-[10px] bg-[#9E9A91] px-3.5 py-2.5"
+            style={{
+              boxShadow:
+                "inset 0 2px 4px rgba(40,35,28,0.28), inset 0 -1px 0 rgba(255,255,255,0.30)",
+            }}
+          >
+            <span className="text-[10.5px] font-semibold uppercase tracking-wide text-[#2A251D]">
+              Diagram edit
+            </span>
+            <span className="text-[13px] font-medium leading-snug text-[#1C1813]">
               {visualEdit.summary}
             </span>
             {visualEdit.body && (
-              <details className="ml-auto text-xs text-[#888888]">
-                <summary className="cursor-pointer select-none hover:text-[#AAAAAA]">
+              <details className="text-[11px] text-[#2A251D]">
+                <summary className="cursor-pointer select-none hover:text-[#0F0D09]">
                   see prompt
                 </summary>
-                <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap rounded bg-black/30 p-2 font-mono text-[11px] leading-relaxed text-[#999999]">
+                <pre className="mt-1.5 max-h-64 overflow-auto whitespace-pre-wrap rounded bg-black/10 p-2 font-mono text-[11px] leading-relaxed text-[#1C1813]">
                   {visualEdit.body}
                 </pre>
               </details>
@@ -422,40 +430,49 @@ function TurnBubble({
         </div>
       );
     }
+    // Spoken user prompt: a raised espresso bubble on the right, with any
+    // dragged-in context attached as chips inside.
     const { text: userText, items: ctxItems } = extractAttachedContext(
       turn.text,
     );
     return (
-      <div className="rounded-lg border border-[#2A2A2A] bg-[#1A1A1A] px-4 py-3">
-        <div className="mb-2 flex items-center gap-2">
-          <Avatar role="user" />
-          <span className="text-xs text-[#888888]">You</span>
-        </div>
-        {ctxItems.length > 0 && (
-          <div className="mb-2 flex flex-wrap gap-1.5">
-            {ctxItems.map((c, i) => (
-              <ChatContextChip
-                key={i}
-                kind={c.kind}
-                label={c.label}
-                accent={c.accent}
-              />
-            ))}
+      <div className="flex justify-end gap-2">
+        <div className="flex max-w-[78%] flex-col items-end">
+          <div
+            className="rounded-[16px_16px_6px_16px] bg-[#2E2A25] px-3.5 py-2.5"
+            style={{ boxShadow: "0 1px 2px rgba(60,50,30,0.13)" }}
+          >
+            {ctxItems.length > 0 && (
+              <div className="mb-2 flex flex-wrap gap-1.5">
+                {ctxItems.map((c, i) => (
+                  <ChatContextChip
+                    key={i}
+                    kind={c.kind}
+                    label={c.label}
+                    accent={c.accent}
+                  />
+                ))}
+              </div>
+            )}
+            <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-[14px] leading-relaxed text-[#EFE9DD]">
+              {userText}
+            </div>
           </div>
-        )}
-        <div className="whitespace-pre-wrap text-sm text-[#E5E5E5]">
-          {userText}
         </div>
+        <Avatar role="user" />
       </div>
     );
   }
+  // Assistant turn: avatar on the left with a thin timeline rail running
+  // down through the turn, and each block as its own element (speech
+  // bubble, ghost line, or tool card) stacked in the column beside it.
   return (
-    <div className="rounded-lg border border-[#2A2A2A] bg-[#1A1A1A] px-4 py-3">
-      <div className="mb-2 flex items-center gap-2">
+    <div className="flex gap-2.5">
+      <div className="flex flex-none flex-col items-center">
         <Avatar role="assistant" />
-        <span className="text-xs text-[#888888]">Assistant</span>
+        <div className="mt-1.5 w-px flex-1 rounded bg-[#E7E0D2]" />
       </div>
-      <div className="space-y-2 text-sm text-[#E5E5E5]">
+      <div className="flex min-w-0 flex-1 flex-col items-start gap-2.5 pb-1">
         {turn.blocks.map((b, i) => (
           <AssistantBlockView
             key={i}
@@ -503,18 +520,35 @@ function AssistantBlockView({
     // Round-2 may include an added_arrows JSON tail describing real
     // dependencies just wired in code. Push those to the diagram and
     // continue to render the human-readable summary text as markdown.
+    const clean = stripJsonCodeBlocks(block.text);
     return (
       <>
         <ArrowsAddedSink text={block.text} />
-        <Markdown>{stripJsonCodeBlocks(block.text)}</Markdown>
+        {clean.trim() && (
+          <div
+            className="max-w-[80%] self-start break-words [overflow-wrap:anywhere] rounded-[16px_16px_16px_5px] border border-[#EDE6DA] bg-white px-3.5 py-2 text-[14px] leading-relaxed text-[#2E2A25]"
+            style={{ boxShadow: "0 1px 2px rgba(60,50,30,0.05)" }}
+          >
+            <Markdown className="[&_p]:!my-0 [&_p+p]:!mt-2 [&_ul]:!my-1.5 [&_ol]:!my-1.5 [&_li]:!my-0 [&_pre]:!my-2">
+              {clean.trim()}
+            </Markdown>
+          </div>
+        )}
       </>
     );
   }
   if (block.kind === "thinking") {
     return (
-      <details className="text-xs text-muted-foreground">
-        <summary className="cursor-pointer">thinking…</summary>
-        <Markdown className="pt-1 prose-xs">{block.text}</Markdown>
+      <details className="self-start text-[12px] text-[#A89E8E]">
+        <summary className="cursor-pointer select-none list-none hover:text-[#8A8175]">
+          <span className="inline-flex items-center gap-1.5">
+            <Sparkles size={12} className="text-[#C2B79F]" />
+            thinking
+          </span>
+        </summary>
+        <div className="mt-1 border-l-2 border-[#EAE3D6] pl-2.5">
+          <Markdown className="prose-xs">{block.text}</Markdown>
+        </div>
       </details>
     );
   }
@@ -526,10 +560,7 @@ function AssistantBlockView({
 
     if (!isResolved && pending && Component) {
       return (
-        <div>
-          <div className="mb-1 text-xs text-muted-foreground">
-            Claude is asking: <code className="font-mono">{pending.name}</code>
-          </div>
+        <div className="w-full self-stretch">
           <Component
             input={pending.input}
             resolve={(content) => onResolve(pending.tool_call_id, content)}
@@ -537,9 +568,13 @@ function AssistantBlockView({
         </div>
       );
     }
+    // Resolved: the tool_result card renders the outcome, so the bare
+    // tool_use needs no duplicate label.
+    if (isResolved) return null;
+    // Pending but no live UI registered: a quiet "running" ghost.
     return (
-      <div className="rounded bg-background/50 p-2 text-xs">
-        <span className="font-mono">tool</span> · {name}
+      <div className="self-start font-mono text-[11px] text-[#A89E8E]">
+        {name}…
       </div>
     );
   }
@@ -552,16 +587,20 @@ function AssistantBlockView({
 
     if (ResultComponent) {
       return (
-        <ResultComponent
-          content={parsed.value}
-          toolUseId={block.tool_use_id}
-        />
+        <div className="w-full self-stretch">
+          <ResultComponent
+            content={parsed.value}
+            toolUseId={block.tool_use_id}
+          />
+        </div>
       );
     }
     return (
-      <details className="text-xs text-muted-foreground">
-        <summary className="cursor-pointer">tool result</summary>
-        <pre className="mt-1 overflow-x-auto whitespace-pre-wrap rounded bg-background/50 p-2">
+      <details className="self-start text-[12px] text-[#A89E8E]">
+        <summary className="cursor-pointer select-none hover:text-[#8A8175]">
+          tool result
+        </summary>
+        <pre className="mt-1 overflow-x-auto whitespace-pre-wrap rounded-md border border-[#EAE3D6] bg-[#FBF7EF] p-2 font-mono text-[11px] text-[#6E6457]">
           {parsed.preview}
         </pre>
       </details>
@@ -628,7 +667,7 @@ function parseToolResultContent(raw: unknown): {
  */
 function NoProjectPrompt() {
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-sm text-[#888888]">
+    <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-sm text-[#9A9081]">
       <Upload size={28} className="opacity-40" />
       <p>Upload a project in the Files panel to begin.</p>
     </div>
@@ -637,7 +676,7 @@ function NoProjectPrompt() {
 
 function ReadyPrompt() {
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-xs text-[#666666]">
+    <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-xs text-[#A89E8E]">
       <p>Project loaded. Type a message below to start.</p>
     </div>
   );

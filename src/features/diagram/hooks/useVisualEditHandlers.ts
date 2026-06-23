@@ -210,19 +210,26 @@ export function useVisualEditHandlers({
   const handleAddConnection = useCallback(
     (connection: Connection) => {
       const { source, target } = connection;
-      if (!source || !target) return;
-      if (source === target) return;
+      if (!source || !target || source === target) return;
+      // Decide validity SYNCHRONOUSLY from current state. The old code set
+      // an `opened` flag inside the setState updater and read it right
+      // after, but React does not guarantee the updater runs eagerly
+      // (especially with an async setState already queued, e.g. the
+      // capability refresh after a block edit) so the gate could silently
+      // never open and the pending arrow would blink forever.
+      if (state.kind !== "ready") return;
+      const { blocks, arrows } = state.schema;
+      if (!blocks.some((b) => b.id === source)) return;
+      if (!blocks.some((b) => b.id === target)) return;
+      if (arrows.some((a) => a.from === source && a.to === target)) return;
       dismissRecentEdit();
-      let opened = false;
       setState((prev) => {
         if (prev.kind !== "ready") return prev;
-        const fromBlock = prev.schema.blocks.find((b) => b.id === source);
-        const toBlock = prev.schema.blocks.find((b) => b.id === target);
-        if (!fromBlock || !toBlock) return prev;
-        const duplicate = prev.schema.arrows.some(
-          (a) => a.from === source && a.to === target,
-        );
-        if (duplicate) return prev;
+        if (
+          prev.schema.arrows.some((a) => a.from === source && a.to === target)
+        ) {
+          return prev;
+        }
         const newArrow: DiagramArrow = {
           from: source,
           to: target,
@@ -236,7 +243,6 @@ export function useVisualEditHandlers({
           // execute turn completes (the arrow branch matches it by key).
           pending: "intent",
         };
-        opened = true;
         return {
           kind: "ready",
           schema: {
@@ -245,11 +251,10 @@ export function useVisualEditHandlers({
           },
         };
       });
-      if (opened) {
-        setIntentGate({ target: { kind: "arrow", from: source, to: target } });
-      }
+      // Validity was decided above, so open the gate unconditionally.
+      setIntentGate({ target: { kind: "arrow", from: source, to: target } });
     },
-    [dismissRecentEdit, setState],
+    [state, dismissRecentEdit, setState],
   );
 
   /**

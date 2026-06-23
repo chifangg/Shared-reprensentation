@@ -21,7 +21,7 @@ export function Markdown({
   className?: string;
 }) {
   return (
-    <div className={cn("prose prose-sm prose-invert max-w-none", className)}>
+    <div className={cn("prose prose-sm max-w-none", className)}>
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components} {...rest}>
         {children}
       </ReactMarkdown>

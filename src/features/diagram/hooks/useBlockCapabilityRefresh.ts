@@ -63,13 +63,28 @@ export function useBlockCapabilityRefresh({
       return match?.content ?? "";
     };
 
+    // Files already owned by SOME block (loose path match). An edit to a
+    // file owned by another block refreshes THAT block (via editedBlockIds);
+    // it must not be absorbed into the block the user happened to click.
+    const ownedAll = snapshot.schema.blocks.flatMap(
+      (b) => b.provenance?.files ?? [],
+    );
+    const isOwned = (p: string) => {
+      const np = p.replace(/^\.?\//, "");
+      return ownedAll.some(
+        (o) => o === p || o.endsWith(`/${np}`) || np.endsWith(`/${o}`),
+      );
+    };
+
     const entries = Array.from(refreshTargets.entries()).slice(0, MAX_REFRESH);
     for (const [id, extraFiles] of entries) {
       const block = snapshot.schema.blocks.find((b) => b.id === id);
       if (!block) continue;
-      // Extra files that actually exist in the project (so a new file
-      // joins provenance; missing paths are dropped).
-      const presentExtra = extraFiles.filter((p) => contentOf(p).length > 0);
+      // Only fold in BRAND-NEW files (created this turn, not owned by any
+      // block). These join the clicked block's re-scan + provenance.
+      const presentExtra = extraFiles.filter(
+        (p) => contentOf(p).length > 0 && !isOwned(p),
+      );
       const allPaths = uniq([...(block.provenance?.files ?? []), ...presentExtra]);
       const blobs = allPaths
         .map((p) => ({ path: p, content: contentOf(p) }))

@@ -377,12 +377,24 @@ export function useChatSettleEffect({
           .replace(/```(?:json)?\s*\n[\s\S]*?\n```/g, "")
           .trim();
         const firstParagraph = stripped.split(/\n\n+/)[0] ?? "";
+        // Labels of the blocks whose code changed, so the user knows which
+        // block now reflects the edit (it may not be the one they clicked).
+        const changedBlockLabels =
+          state.kind === "ready"
+            ? Array.from(editedBlockIds)
+                .map(
+                  (id) =>
+                    state.schema.blocks.find((b) => b.id === id)?.label,
+                )
+                .filter((l): l is string => !!l)
+            : [];
         setEditSummary({
           files: Array.from(editedFiles),
           text:
             firstParagraph.length > 220
               ? `${firstParagraph.slice(0, 217)}…`
               : firstParagraph,
+          blocks: changedBlockLabels.length > 0 ? changedBlockLabels : undefined,
           note: droppedNote,
         });
       }

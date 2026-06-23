@@ -3,6 +3,11 @@ import { useState, type Dispatch, type SetStateAction } from "react";
 export type EditSummary = {
   files: string[];
   text: string;
+  /** Labels of the blocks whose code changed this turn (so their drill-in
+   *  capabilities get re-derived + they glow). Shown so the user knows
+   *  WHICH block reflects the change, even if it differs from the one they
+   *  clicked. */
+  blocks?: string[];
   /** Optional notice shown when a user-drawn connection was NOT kept
    *  because the edit established no direct relationship between the two
    *  blocks. Lets the user understand why their line vanished instead of

@@ -32,11 +32,11 @@ export function PromptInput({
   };
 
   return (
-    <div className="border-t border-[#2A2A2A] bg-[#141414] p-3">
+    <div className="border-t border-[#E2DACB] bg-[#F0EADE] p-3">
       {attachments}
       <div className="flex items-end gap-2">
       <textarea
-        className="flex-1 resize-none rounded-md border border-[#2A2A2A] bg-[#0F0F0F] px-3 py-2 text-sm text-[#E5E5E5] placeholder:text-[#555555] outline-none focus:border-[#78716C]/50 disabled:opacity-60"
+        className="flex-1 resize-none rounded-lg border border-[#E2DACB] bg-white px-3 py-2 text-[14px] text-[#2E2A25] placeholder:text-[#B3A998] outline-none focus:border-[#B7AE9C] disabled:opacity-60"
         placeholder={running ? "Streaming…" : "Type a message…"}
         rows={1}
         value={value}
@@ -48,7 +48,7 @@ export function PromptInput({
         <button
           type="button"
           onClick={onCancel}
-          className="rounded-md border border-red-500/40 bg-red-500/15 px-3 py-2 text-xs font-medium text-red-300 transition-colors hover:bg-red-500/25"
+          className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs font-medium text-red-600 transition-colors hover:bg-red-100"
         >
           Cancel
         </button>
@@ -57,7 +57,7 @@ export function PromptInput({
           type="button"
           onClick={submit}
           disabled={disabled || !value.trim()}
-          className="rounded-md border border-[#2A2A2A] bg-[#242424] px-4 py-2 text-xs font-medium text-[#E5E5E5] transition-colors hover:bg-[#2F2F2F] disabled:opacity-40 disabled:hover:bg-[#242424]"
+          className="rounded-lg border border-[#2E2A25] bg-[#2E2A25] px-4 py-2 text-xs font-medium text-[#EFE9DD] transition-colors hover:bg-[#46403A] disabled:opacity-40 disabled:hover:bg-[#2E2A25]"
         >
           Send
         </button>
