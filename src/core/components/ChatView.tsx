@@ -18,7 +18,7 @@ import {
   clientToolRegistry,
   toolResultRegistry,
 } from "@/core/tools/registry";
-import { Bot, User, Upload, Sparkles } from "lucide-react";
+import { Bot, User, Upload, Sparkles, ChevronRight } from "lucide-react";
 import { useProject, buildChatSystemPrompt } from "@/core/project";
 import {
   ArrowsAddedSink,
@@ -436,7 +436,7 @@ function TurnBubble({
       turn.text,
     );
     return (
-      <div className="flex justify-end gap-2">
+      <div className="flex items-start justify-end gap-2">
         <div className="flex max-w-[78%] flex-col items-end">
           <div
             className="rounded-[16px_16px_6px_16px] bg-[#2E2A25] px-3.5 py-2.5"
@@ -459,7 +459,9 @@ function TurnBubble({
             </div>
           </div>
         </div>
-        <Avatar role="user" />
+        <div className="mt-1 shrink-0">
+          <Avatar role="user" />
+        </div>
       </div>
     );
   }
@@ -539,9 +541,13 @@ function AssistantBlockView({
   }
   if (block.kind === "thinking") {
     return (
-      <details className="self-start text-[12px] text-[#A89E8E]">
+      <details className="group self-start text-[12px] text-[#A89E8E]">
         <summary className="cursor-pointer select-none list-none hover:text-[#8A8175]">
           <span className="inline-flex items-center gap-1.5">
+            <ChevronRight
+              size={12}
+              className="text-[#C2B79F] transition-transform group-open:rotate-90"
+            />
             <Sparkles size={12} className="text-[#C2B79F]" />
             thinking
           </span>
@@ -554,6 +560,10 @@ function AssistantBlockView({
   }
   if (block.kind === "tool_use") {
     const name = stripMcpPrefix(block.name);
+    // ToolSearch is internal plumbing: this Claude CLI version defers client
+    // (MCP) tools and the model calls ToolSearch to load them before use.
+    // Hide that step so the transcript shows only the real tool calls.
+    if (name === "ToolSearch") return null;
     const pending = pendingByToolUseId.get(block.id);
     const isResolved = resolvedToolUseIds.has(block.id);
     const Component = pending ? clientToolRegistry[pending.name] : undefined;
@@ -584,6 +594,12 @@ function AssistantBlockView({
       ? toolResultRegistry[toolName]
       : undefined;
     const parsed = parseToolResultContent(block.content);
+    // Hide ToolSearch's output (a `tool_reference` pointer to a deferred
+    // tool). It is plumbing, not a result worth showing.
+    const resultValue = parsed.value as { type?: string } | null;
+    if (toolName === "ToolSearch" || resultValue?.type === "tool_reference") {
+      return null;
+    }
 
     if (ResultComponent) {
       return (
@@ -595,13 +611,20 @@ function AssistantBlockView({
         </div>
       );
     }
+    // Unrecognized tool result (a non-MCP / builtin tool, or an odd
+    // tool_reference payload). Keep it collapsed AND truncated so the chat
+    // never floods with raw dumps like full file contents.
+    const preview =
+      parsed.preview.length > 500
+        ? `${parsed.preview.slice(0, 500)}\n…`
+        : parsed.preview;
     return (
-      <details className="self-start text-[12px] text-[#A89E8E]">
-        <summary className="cursor-pointer select-none hover:text-[#8A8175]">
-          tool result
+      <details className="self-start text-[11.5px] text-[#A89E8E]">
+        <summary className="cursor-pointer select-none font-mono hover:text-[#8A8175]">
+          {toolName ?? "tool"} result
         </summary>
-        <pre className="mt-1 overflow-x-auto whitespace-pre-wrap rounded-md border border-[#EAE3D6] bg-[#FBF7EF] p-2 font-mono text-[11px] text-[#6E6457]">
-          {parsed.preview}
+        <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap rounded-md border border-[#EAE3D6] bg-[#FBF7EF] p-2 font-mono text-[11px] leading-relaxed text-[#857F75]">
+          {preview}
         </pre>
       </details>
     );

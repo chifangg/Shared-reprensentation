@@ -85,19 +85,20 @@ pub(super) fn resolve_skip_permissions(extra: &ClaudeExtraArgs) -> bool {
     }
 }
 
-/// Decide the default `--tools` value. If the request doesn't pin one and
-/// `--dangerously-skip-permissions` isn't on, lock Claude to zero built-in
-/// tools so filesystem and bash stay out of customer-facing flows. Forks
-/// that want the dev experience pass `tools: Some("default")` per-request
-/// or set `APP_ALLOW_SKIP_PERMISSIONS=1`.
+/// Decide the default `--tools` value. We intentionally never emit
+/// `--tools ""` anymore: in this Claude CLI version that flag also strips
+/// the MCP (`template-tools`) tools, leaving Claude with no tools at all,
+/// so it hallucinates tool calls as plain text and fabricates results.
+/// Built-in filesystem / bash tools are already kept out of customer flows
+/// by the allow-list plus the default permission mode: any tool not on
+/// `--allowed-tools` is permission-gated, which is a hard block in headless
+/// `-p` mode. Forks that explicitly want builtins pass `tools: Some("...")`
+/// per request.
 pub(super) fn resolve_default_tools(extra: &ClaudeExtraArgs) -> Option<String> {
     if extra.tools.is_some() {
         return None; // caller is explicit; append_extra_args emits it
     }
-    if resolve_skip_permissions(extra) {
-        return None; // dev flow: let Claude see its full builtin set
-    }
-    Some(String::new()) // the CLI treats --tools "" as "disable all builtins"
+    None
 }
 
 /// Append optional CLI flags derived from the request to an existing argv.

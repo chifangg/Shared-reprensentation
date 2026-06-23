@@ -6,9 +6,11 @@ type Result =
       ok: true;
       path: string;
       content: string;
+      offset: number;
       size: number;
-      truncated?: boolean;
-      full_size?: number;
+      total_size: number;
+      has_more: boolean;
+      next_offset?: number;
     }
   | { ok: false; path: string; error: string; available_paths_sample?: string[] };
 
@@ -54,13 +56,16 @@ export function ReadProjectFileResultCard({ content }: ToolResultProps<Result>) 
   }
 
   // A read is a low-weight "agent looked at a file" event: one quiet
-  // ghost line with a read icon + the path. No line/byte counts, no
-  // truncation badge (the model still receives `truncated` in the
-  // tool_result payload; the chat stays clean).
+  // ghost line with a read icon + the path. No line/byte counts. When a
+  // large file is paged in, the chunk that still has more to read shows
+  // a faint "more" so the chat hints at the continuation without clutter.
   return (
     <div className="inline-flex max-w-full items-center gap-1.5 text-[12px] text-[#9A9081]">
       <FileText className="h-3.5 w-3.5 shrink-0 text-[#B3A998]" strokeWidth={2} />
       <span className="truncate font-mono text-[#8A8175]">{content.path}</span>
+      {content.has_more && (
+        <span className="shrink-0 text-[#B3A998]">· more</span>
+      )}
     </div>
   );
 }

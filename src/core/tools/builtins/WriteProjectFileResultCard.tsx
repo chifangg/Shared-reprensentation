@@ -71,13 +71,17 @@ export function WriteProjectFileResultCard({
         </span>
       </header>
       {content.diff.length > 0 && (
-        <pre className="max-h-72 overflow-auto bg-white p-0 font-mono text-[11px] leading-snug">
+        <div className="max-h-72 overflow-auto bg-white font-mono text-[11px] leading-snug">
+          {/* w-max sizes to the widest line; min-w-full keeps it at least
+              the card width, so each row's highlight spans the full
+              horizontal scroll width, not just the viewport. */}
+          <div className="w-max min-w-full">
           {content.diff.map((line, i) => {
             if (line.type === "gap") {
               return (
                 <div
                   key={i}
-                  className="select-none border-y border-[#F0F0F0] bg-[#FAFAFA] px-3 py-0.5 text-center text-[10px] text-[#999999]"
+                  className="w-full select-none border-y border-[#F0F0F0] bg-[#FAFAFA] px-3 py-0.5 text-center text-[10px] text-[#999999]"
                 >
                   ⋮
                 </div>
@@ -94,7 +98,7 @@ export function WriteProjectFileResultCard({
             return (
               <div
                 key={i}
-                className={`flex whitespace-pre px-3 ${cls}`}
+                className={`flex w-full whitespace-pre px-3 ${cls}`}
               >
                 <span className="mr-2 inline-block w-3 select-none text-[#999999]">
                   {marker}
@@ -103,7 +107,8 @@ export function WriteProjectFileResultCard({
               </div>
             );
           })}
-        </pre>
+          </div>
+        </div>
       )}
     </div>
   );

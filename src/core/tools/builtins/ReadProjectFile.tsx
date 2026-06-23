@@ -5,21 +5,26 @@ import { useProject } from "@/core/project";
 
 interface ReadProjectFileInput {
   path: string;
+  /** Char offset to start the chunk at (for paginating large files). */
+  offset?: number;
 }
 
 type ReadProjectFileResult =
   | {
       ok: true;
       path: string;
+      /** This chunk's body: a slice of the file starting at `offset`. */
       content: string;
+      /** Char offset this chunk starts at (0 for the first chunk). */
+      offset: number;
+      /** Length of this chunk, in chars. */
       size: number;
-      /** True when `content` is a prefix of the actual file (we cap big
-       *  files because very large tool_result payloads corrupt
-       *  somewhere in the Claude Code → backend → frontend chain — see
-       *  MAX_READ_BYTES below). */
-      truncated?: boolean;
-      /** Original file size in bytes (set when truncated is true). */
-      full_size?: number;
+      /** Full length of the file, in chars. */
+      total_size: number;
+      /** True when more of the file remains past this chunk. */
+      has_more: boolean;
+      /** Offset to pass back to read the next chunk (set when has_more). */
+      next_offset?: number;
     }
   | { ok: false; path: string; error: string; available_paths_sample?: string[] };
 
@@ -43,6 +48,34 @@ type ReadProjectFileResult =
 const MAX_READ_BYTES = 30 * 1024;
 
 /**
+ * Slice `body` into a chunk of at most MAX_READ_BYTES starting at
+ * `offset`, plus the pagination metadata Claude needs to fetch the
+ * rest. Replaces the old hard truncation: a big file is now read in
+ * order across several calls (each safely under the persist threshold)
+ * instead of being silently cut to its prefix.
+ */
+function chunkResult(
+  path: string,
+  body: string,
+  offset: number,
+): ReadProjectFileResult {
+  const start = Math.min(Math.max(0, offset), body.length);
+  const content = body.slice(start, start + MAX_READ_BYTES);
+  const end = start + content.length;
+  const hasMore = end < body.length;
+  return {
+    ok: true,
+    path,
+    content,
+    offset: start,
+    size: content.length,
+    total_size: body.length,
+    has_more: hasMore,
+    ...(hasMore ? { next_offset: end } : {}),
+  };
+}
+
+/**
  * Invisible tool handler: when Claude calls `read_project_file`, this
  * component mounts in the chat. It immediately looks up the requested
  * path in the in-browser ProjectContext and resolves the tool with the
@@ -64,6 +97,7 @@ export function ReadProjectFile({
     resolvedRef.current = true;
 
     const requested = input.path.trim();
+    const offset = Math.max(0, Math.floor(input.offset ?? 0));
     if (!requested) {
       resolve({ ok: false, path: requested, error: "empty path" });
       return;
@@ -86,12 +120,7 @@ export function ReadProjectFile({
         .sort()
         .join("\n");
       const treeBody = `Project file tree (${files.length} files). Pass one of these paths to read its body.\n\n${tree}`;
-      resolve({
-        ok: true,
-        path: requested,
-        content: treeBody,
-        size: treeBody.length,
-      });
+      resolve(chunkResult(requested, treeBody, offset));
       return;
     }
 
@@ -169,25 +198,8 @@ export function ReadProjectFile({
       return;
     }
 
-    if (f.content.length > MAX_READ_BYTES) {
-      resolve({
-        ok: true,
-        path: f.path,
-        content: f.content.slice(0, MAX_READ_BYTES),
-        size: MAX_READ_BYTES,
-        truncated: true,
-        full_size: f.size,
-      });
-      return;
-    }
-
-    resolve({
-      ok: true,
-      path: f.path,
-      content: f.content,
-      size: f.size,
-    });
-  }, [files, input.path, resolve]);
+    resolve(chunkResult(f.path, f.content, offset));
+  }, [files, input.path, input.offset, resolve]);
 
   return (
     <div className="flex items-center gap-2 rounded-md border border-[#78716C]/20 bg-[#F5F5F4] px-3 py-1.5 text-xs text-[#78716C]">

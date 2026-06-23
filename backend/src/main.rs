@@ -74,11 +74,14 @@ fn build_tool_registry() -> core::tools::ToolRegistry {
 
     b.client_tool(
         "read_project_file",
-        "Read the full contents of a file from the user's uploaded \
-         project. The system prompt includes a tree of every available \
-         path; pass one of those paths exactly to fetch its body. Use \
-         this whenever you need to look at code the user is asking \
-         about — do not try to guess from the path alone.",
+        "Read a file from the user's uploaded project. The system prompt \
+         includes a tree of every available path; pass one of those paths \
+         exactly to fetch its body. Use this whenever you need to look at \
+         code the user is asking about; do not try to guess from the path \
+         alone. Large files come back in chunks: if the result has \
+         `has_more: true`, call this tool again with the SAME `path` and \
+         `offset` set to the returned `next_offset`, repeating until \
+         `has_more` is false, so you read the whole file before acting.",
         json!({
             "type": "object",
             "properties": {
@@ -87,6 +90,13 @@ fn build_tool_registry() -> core::tools::ToolRegistry {
                     "description": "Project-relative path exactly as it \
                         appears in the <tree> block of the system \
                         prompt (e.g. 'transcript_annotation_BU/app.py')."
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "Character offset to start reading from. \
+                        Omit (or 0) to read from the start. To continue a \
+                        large file, pass the `next_offset` returned by the \
+                        previous chunk."
                 }
             },
             "required": ["path"],
