@@ -55,7 +55,7 @@ export function EditSummaryToast({
       </div>
       {summary.blocks && summary.blocks.length > 0 && (
         <div className="mb-1.5 flex flex-wrap items-center gap-1 text-[11px] text-[#666666]">
-          <span className="text-[#999999]">Capabilities updated on</span>
+          <span className="text-[#999999]">Features updated on</span>
           {summary.blocks.map((b) => (
             <span
               key={b}

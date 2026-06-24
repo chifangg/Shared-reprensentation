@@ -377,6 +377,17 @@ function Avatar({ role }: { role: "user" | "assistant" }) {
   );
 }
 
+/** Small chip naming the block / connection a visual edit was about, so
+ *  the transcript shows which element was touched (the canvas highlight
+ *  alone is not visible when scrolling back). Readable on the gray block. */
+function TargetChip({ label }: { label: string }) {
+  return (
+    <span className="inline-flex max-w-[170px] items-center truncate rounded-md bg-white/80 px-2 py-0.5 text-[11px] font-medium text-[#3A352B]">
+      {label}
+    </span>
+  );
+}
+
 function TurnBubble({
   turn,
   editTarget,
@@ -401,10 +412,11 @@ function TurnBubble({
     // pinned to the user's (right) side. Distinct material from a speech
     // bubble: pressed into the surface, not floating.
     if (visualEdit) {
+      const target = visualEdit.target;
       return (
-        <div className="flex justify-end">
+        <div className="flex items-start justify-end gap-2">
           <div
-            className="inline-flex max-w-[82%] flex-col gap-1 rounded-[10px] bg-[#9E9A91] px-3.5 py-2.5"
+            className="inline-flex max-w-[82%] flex-col gap-1.5 rounded-[10px] bg-[#9E9A91] px-3.5 py-2.5"
             style={{
               boxShadow:
                 "inset 0 2px 4px rgba(40,35,28,0.28), inset 0 -1px 0 rgba(255,255,255,0.30)",
@@ -416,6 +428,19 @@ function TurnBubble({
             <span className="text-[13px] font-medium leading-snug text-[#1C1813]">
               {visualEdit.summary}
             </span>
+            {target && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                {target.kind === "block" ? (
+                  <TargetChip label={target.label} />
+                ) : (
+                  <>
+                    <TargetChip label={target.from} />
+                    <span className="text-[#3A352B]">&rarr;</span>
+                    <TargetChip label={target.to} />
+                  </>
+                )}
+              </div>
+            )}
             {visualEdit.body && (
               <details className="text-[11px] text-[#2A251D]">
                 <summary className="cursor-pointer select-none hover:text-[#0F0D09]">
@@ -426,6 +451,9 @@ function TurnBubble({
                 </pre>
               </details>
             )}
+          </div>
+          <div className="mt-1 shrink-0">
+            <Avatar role="user" />
           </div>
         </div>
       );

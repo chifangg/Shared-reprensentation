@@ -212,7 +212,7 @@ export function BlockNode({ data, selected }: NodeProps<Node<BlockNodeData>>) {
           title={[
             fileCount > 0 ? `Files:\n${data.files.join("\n")}` : "",
             capCount > 0
-              ? `Capabilities:\n${(data.capabilities ?? []).join("\n")}`
+              ? `Features:\n${(data.capabilities ?? []).join("\n")}`
               : fnCount > 0
                 ? `Functions:\n${data.functions.slice(0, 12).join(", ")}${
                     fnCount > 12 ? ` (+${fnCount - 12} more)` : ""
@@ -233,8 +233,8 @@ export function BlockNode({ data, selected }: NodeProps<Node<BlockNodeData>>) {
               {drillCount}{" "}
               {capCount > 0
                 ? drillCount === 1
-                  ? "capability"
-                  : "capabilities"
+                  ? "feature"
+                  : "features"
                 : drillCount === 1
                   ? "fn"
                   : "fns"}

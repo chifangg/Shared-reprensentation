@@ -87,14 +87,38 @@ export function parseTargetMetadata(text: string): EditTarget | null {
 }
 
 /**
+ * The diagram element a visual edit targets, with human-readable labels
+ * (not internal ids) pulled from the prompt body so the chat can show
+ * which block / connection the edit was about.
+ */
+export type VisualEditTarget =
+  | { kind: "block"; label: string }
+  | { kind: "arrow"; from: string; to: string };
+
+/**
+ * Pull the readable target label(s) out of a visual-edit prompt body.
+ * The body templates (see protocol/prompts.ts) phrase these as
+ * `Block ("Label")` and `Source/Target block ("Label")`.
+ */
+function parseTargetLabels(body: string): VisualEditTarget | null {
+  const src = body.match(/Source block \("([^"]+)"\)/);
+  const tgt = body.match(/Target block \("([^"]+)"\)/);
+  if (src && tgt) return { kind: "arrow", from: src[1], to: tgt[1] };
+  const block = body.match(/Block \("([^"]+)"\)/);
+  if (block) return { kind: "block", label: block[1] };
+  return null;
+}
+
+/**
  * Parse a user message; if it begins with the visual-edit sentinel,
- * return the summary and the body (everything after the sentinel line)
- * separately so the chat can render them as a compact + expandable
- * pair. Returns null for ordinary typed user messages.
+ * return the summary, the body (everything after the sentinel line), and
+ * the readable target so the chat can render a compact bubble with a
+ * "which block" chip + a "see prompt" expander. Returns null for
+ * ordinary typed user messages.
  */
 export function parseVisualEditMessage(
   text: string,
-): { summary: string; body: string } | null {
+): { summary: string; body: string; target: VisualEditTarget | null } | null {
   if (!text.startsWith(VISUAL_EDIT_SENTINEL_PREFIX)) return null;
   const nl = text.indexOf("\n");
   const firstLine = nl === -1 ? text : text.slice(0, nl);
@@ -112,5 +136,5 @@ export function parseVisualEditMessage(
     if (nl2 !== -1) body = body.slice(nl2 + 1).replace(/^\n+/, "");
     else body = "";
   }
-  return { summary, body };
+  return { summary, body, target: parseTargetLabels(body) };
 }
