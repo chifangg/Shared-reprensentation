@@ -101,6 +101,18 @@ pub(super) fn resolve_default_tools(extra: &ClaudeExtraArgs) -> Option<String> {
     None
 }
 
+/// Built-in Claude tools we DENY in customer chat so the model uses ONLY
+/// the project's MCP tools. Without this it reaches for its built-in Read
+/// / Bash on the (empty) sandbox cwd, hits "File does not exist", and
+/// wastes turns being confused about which tools it has. `ToolSearch` is
+/// intentionally NOT denied: this CLI version defers client (MCP) tools
+/// and loads them through ToolSearch, so denying it would remove the MCP
+/// tools too. Keep roughly in sync with the CLI's built-in set.
+// Only names this CLI actually knows; an unknown entry makes the CLI emit
+// a "matches no known tool" warning on stderr that surfaces as a scary red
+// banner. (Dropped MultiEdit + SlashCommand for that reason.)
+pub(super) const BUILTIN_TOOL_DENYLIST: &str = "Read,Write,Edit,NotebookEdit,Bash,BashOutput,KillShell,Glob,Grep,WebFetch,WebSearch,TodoWrite,Task,Skill,Workflow,Monitor,SendMessage,PushNotification,ScheduleWakeup,AskUserQuestion,EnterPlanMode,ExitPlanMode,EnterWorktree,ExitWorktree,DesignSync,RemoteTrigger,CronCreate,CronDelete,CronList";
+
 /// Append optional CLI flags derived from the request to an existing argv.
 pub(super) fn append_extra_args(args: &mut Vec<String>, extra: &ClaudeExtraArgs) {
     if let Some(ref m) = extra.permission_mode {

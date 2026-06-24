@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   useClaudeSession,
   type ClaudeMessage,
@@ -12,6 +12,7 @@ import {
   type ChatContextItem,
 } from "@/core/chatContext";
 import { useChatContextDropZone } from "@/core/chatContextDrag";
+import { useChatActivity } from "@/core/chatActivity";
 import { ThinkingBubble } from "@/core/components/ThinkingBubble";
 import { Markdown } from "@/core/components/Markdown";
 import {
@@ -45,6 +46,7 @@ import {
 export function ChatView({ model }: { model?: string }) {
   const session = useClaudeSession({ model });
   const { files, setChatMessages, setChatRunning } = useProject();
+  const { entries: activityEntries, clear: clearActivity } = useChatActivity();
   const running = session.status === "running";
 
   const hasFiles = files.length > 0;
@@ -64,6 +66,7 @@ export function ChatView({ model }: { model?: string }) {
 
   const handleNewChat = () => {
     session.reset();
+    clearActivity();
   };
 
   const handleSend = (prompt: string) => {
@@ -242,16 +245,26 @@ export function ChatView({ model }: { model?: string }) {
               break;
             }
           }
+          // Diagram-action records (pushed by the diagram feature) whose
+          // turn-sequence falls in this turn's range render right after it.
+          const nextKey = turns[idx + 1]?.key ?? Number.POSITIVE_INFINITY;
+          const afterEntries = activityEntries.filter(
+            (e) => e.afterSeq >= t.key && e.afterSeq < nextKey,
+          );
           return (
-            <TurnBubble
-              key={t.key}
-              turn={t}
-              editTarget={editTarget}
-              pendingByToolUseId={pendingByToolUseId}
-              resolvedToolUseIds={resolvedToolUseIds}
-              toolNameById={toolNameById}
-              onResolve={session.resolveToolCall}
-            />
+            <Fragment key={t.key}>
+              <TurnBubble
+                turn={t}
+                editTarget={editTarget}
+                pendingByToolUseId={pendingByToolUseId}
+                resolvedToolUseIds={resolvedToolUseIds}
+                toolNameById={toolNameById}
+                onResolve={session.resolveToolCall}
+              />
+              {afterEntries.map((e) => (
+                <div key={e.id}>{e.node}</div>
+              ))}
+            </Fragment>
           );
         })}
         {running && <ThinkingBubble />}
@@ -416,7 +429,7 @@ function TurnBubble({
       return (
         <div className="flex items-start justify-end gap-2">
           <div
-            className="inline-flex max-w-[82%] flex-col gap-1.5 rounded-[10px] bg-[#9E9A91] px-3.5 py-2.5"
+            className="inline-flex max-w-[82%] flex-col gap-1.5 rounded-[10px] bg-[#ABA69C] px-3.5 py-2.5"
             style={{
               boxShadow:
                 "inset 0 2px 4px rgba(40,35,28,0.28), inset 0 -1px 0 rgba(255,255,255,0.30)",

@@ -91,6 +91,12 @@ pub(super) async fn execute_claude_command(
         if !b.allowed_tools.is_empty() {
             args.push("--allowed-tools".into());
             args.push(b.allowed_tools.join(","));
+            // Keep Claude to the MCP tools only (no built-in Read/Bash on
+            // the empty sandbox). Skipped in the dev skip-permissions flow.
+            if !resolve_skip_permissions(&extra) {
+                args.push("--disallowed-tools".into());
+                args.push(super::args::BUILTIN_TOOL_DENYLIST.into());
+            }
         }
     }
     append_extra_args(&mut args, &extra);

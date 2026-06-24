@@ -28,6 +28,9 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useProject } from "@/core/project";
+import { useChatActivity } from "@/core/chatActivity";
+import { categoryStyle } from "../util/blockCategory";
+import { DiagramActionEntry } from "./overlays/DiagramActionEntry";
 import {
   type BlockNodeData,
   type DiagramArrow,
@@ -209,6 +212,35 @@ function DiagramCanvasInner({
     preRegenSnapshotRef,
   });
   const { editSummary, setEditSummary } = useEditSummary();
+
+  // Mirror the diagram's reaction to a code-editing turn into the chat
+  // transcript: when features are re-derived on a block, drop a sand
+  // "Updated the diagram" record under the agent reply that caused it,
+  // tagged to that turn's sequence. The record flashes blue on mount in
+  // sync with the canvas glow. Pushed through the core chat-activity
+  // channel so ChatView stays unaware of diagram specifics.
+  const { pushEntry: pushChatActivity } = useChatActivity();
+  useEffect(() => {
+    const labels = editSummary?.blocks;
+    if (!labels || labels.length === 0) return;
+    const blocks = state.kind === "ready" ? state.schema.blocks : [];
+    const chips = labels.map((label) => {
+      const cat = blocks.find((b) => b.label === label)?.category;
+      return { label, accent: categoryStyle(cat)?.accent ?? "#978B77" };
+    });
+    const seq = chatMessages.length
+      ? chatMessages[chatMessages.length - 1]._seq
+      : 0;
+    pushChatActivity({
+      id: `feat:${seq}:${labels.join("|")}`,
+      afterSeq: seq,
+      node: <DiagramActionEntry verb="Updated the diagram" chips={chips} />,
+    });
+    // Read state / chatMessages from the render where editSummary settled
+    // (both are final by then); re-running on their later changes would
+    // mis-tag the record to a newer turn.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editSummary, pushChatActivity]);
 
   // Live blue pulse on the block(s) whose files Claude is editing RIGHT
   // NOW (turn in flight). Clears on settle, where recentChanges takes
