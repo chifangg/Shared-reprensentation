@@ -87,7 +87,16 @@ export function BlockNode({ data, selected }: NodeProps<Node<BlockNodeData>>) {
         borderColor: cat.accent,
         borderLeftWidth: 4,
       }
-    : undefined;
+    : !data.isPending && !data.isContainer
+      ? {
+          // Real block the model left without a category (e.g. a freshly
+          // created one before the next structure regen). Give it a soft
+          // neutral tint so it reads as "uncategorized", not broken-white.
+          backgroundColor: "#F0ECE4",
+          borderColor: "#D2CABB",
+          borderLeftWidth: 4,
+        }
+      : undefined;
   return (
     <div
       className={`block-node-grow group/block relative rounded-lg border bg-white px-3 py-2 transition-all ${borderColor} ${ring} ${dim}`}

@@ -19,7 +19,7 @@ import {
   clientToolRegistry,
   toolResultRegistry,
 } from "@/core/tools/registry";
-import { Bot, User, Upload, Sparkles, ChevronRight } from "lucide-react";
+import { Bot, User, Upload, Sparkles, ChevronRight, Box } from "lucide-react";
 import { useProject, buildChatSystemPrompt } from "@/core/project";
 import {
   ArrowsAddedSink,
@@ -395,8 +395,13 @@ function Avatar({ role }: { role: "user" | "assistant" }) {
  *  alone is not visible when scrolling back). Readable on the gray block. */
 function TargetChip({ label }: { label: string }) {
   return (
-    <span className="inline-flex max-w-[170px] items-center truncate rounded-md bg-white/80 px-2 py-0.5 text-[11px] font-medium text-[#3A352B]">
-      {label}
+    <span className="inline-flex max-w-[180px] items-center gap-1 rounded-md border border-black/[0.06] bg-white/90 px-2 py-[3px] text-[11px] font-medium text-[#3A352B]">
+      <Box
+        className="h-3 w-3 shrink-0 text-[#8C8275]"
+        strokeWidth={2}
+        aria-hidden="true"
+      />
+      <span className="truncate">{label}</span>
     </span>
   );
 }

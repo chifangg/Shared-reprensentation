@@ -148,6 +148,15 @@ export function WriteProjectFile({
     const existing = files.find((f) => f.path === path);
     const oldContent = existing?.content ?? "";
     const { hunks, added, removed } = diffLines(oldContent, input.content);
+    // Cap the rendered diff so the tool_result stays well under the CLI's
+    // ~50KB persist threshold. A huge diff (e.g. a big new file) would get
+    // auto-persisted and come back as an unparseable preview, which the
+    // result card showed as "Tool returned no parseable result".
+    const MAX_DIFF_LINES = 60;
+    const diff: DiffLine[] =
+      hunks.length > MAX_DIFF_LINES
+        ? [...hunks.slice(0, MAX_DIFF_LINES), { type: "gap" }]
+        : hunks;
     updateFileContent(path, input.content);
     resolve({
       ok: true,
@@ -157,7 +166,7 @@ export function WriteProjectFile({
       previous_size: existing ? existing.size : null,
       added,
       removed,
-      diff: hunks,
+      diff,
     });
   }, [files, input.path, input.content, updateFileContent, resolve]);
 

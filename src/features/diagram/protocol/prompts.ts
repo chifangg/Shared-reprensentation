@@ -317,6 +317,21 @@ export function composeExecuteOptionPrompt(
     `Detail: ${option.detail}`,
     `Kind: ${option.kind}`,
   ];
+  // Readable target label(s) so the chat transcript can show which block /
+  // connection this edit was about. Round-1 includes it via the target
+  // context block; round-2's compact body did not, so the chip was missing
+  // on "Executing:" cards. parseVisualEditMessage keys on this exact phrasing.
+  if (target.kind === "block") {
+    const label = schema.blocks.find((b) => b.id === target.id)?.label;
+    if (label) promptLines.push(`Block ("${label}")`);
+  } else if (target.kind === "arrow") {
+    const from = schema.blocks.find((b) => b.id === target.from)?.label;
+    const to = schema.blocks.find((b) => b.id === target.to)?.label;
+    if (from) promptLines.push(`Source block ("${from}")`);
+    if (to) promptLines.push(`Target block ("${to}")`);
+  } else {
+    promptLines.push(`Block ("${option.title.slice(0, 40)}")`);
+  }
   if (
     target.kind === "arrow" &&
     option.kind === "block_level" &&
