@@ -217,9 +217,19 @@ export type BlockNodeData = {
   /** Model-assigned category for color-coding. Undefined falls back to
    *  the neutral card style. */
   category?: BlockCategory;
+  /** Fill + accent resolved through the active color scheme. Computed in
+   *  DiagramCanvas so the node renderer stays scheme-agnostic; absent
+   *  means the block falls outside every group (neutral style). */
+  colorTint?: string;
+  colorAccent?: string;
   isContainer: boolean;
   isFocused: boolean;
   isDimmed: boolean;
+  /** User clicked this block to drill in: the description un-clamps to
+   *  full length AND the feature bubbles fan out, in lockstep. Driven by
+   *  expandedBlockId (the bubble-focus state), not React Flow's
+   *  `selected` prop, so a re-click collapses both together. */
+  isExpanded?: boolean;
   /** User-asked-for placeholder waiting for Claude to scaffold. Renders
    *  with marching-ants dashed blue border instead of normal frame. */
   isPending: boolean;

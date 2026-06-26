@@ -4,7 +4,6 @@ import { MoreHorizontal, Grip } from "lucide-react";
 import { useChatContextDrag } from "@/core/chatContextDrag";
 import type { BlockNodeData } from "../../types";
 import { NODE_H, NODE_W } from "../../layout/constants";
-import { categoryStyle } from "../../util/blockCategory";
 import { blockContextItem } from "../../util/contextItem";
 
 /**
@@ -72,26 +71,30 @@ export function BlockNode({ data, selected }: NodeProps<Node<BlockNodeData>>) {
   const dim = data.isDimmed
     ? "opacity-30 saturate-50 transition-opacity duration-300"
     : "opacity-100 transition-opacity duration-300";
-  // Category color-coding applies only to ordinary blocks. Pending
-  // placeholders and container frames keep their own distinct framing so
-  // the tint doesn't muddy those states. Inline style so it overrides
-  // the base `bg-white` + neutral border classes; the accent rides on
-  // the left edge as a chunking cue.
-  const cat =
-    !data.isPending && !data.isContainer
-      ? categoryStyle(data.category)
-      : null;
-  const catStyle = cat
+  // Color-coding applies only to ordinary blocks. Pending placeholders
+  // and container frames keep their own distinct framing so the tint
+  // doesn't muddy those states. The fill + accent are resolved upstream
+  // in DiagramCanvas through the active color scheme, so this renderer
+  // stays scheme-agnostic. Inline style so it overrides the base
+  // `bg-white` + neutral border classes; the accent rides on the left
+  // edge as a chunking cue.
+  const colored =
+    !data.isPending &&
+    !data.isContainer &&
+    !!data.colorTint &&
+    !!data.colorAccent;
+  const catStyle = colored
     ? {
-        backgroundColor: cat.tint,
-        borderColor: cat.accent,
+        backgroundColor: data.colorTint,
+        borderColor: data.colorAccent,
         borderLeftWidth: 4,
       }
     : !data.isPending && !data.isContainer
       ? {
-          // Real block the model left without a category (e.g. a freshly
-          // created one before the next structure regen). Give it a soft
-          // neutral tint so it reads as "uncategorized", not broken-white.
+          // Real block that falls outside every group in the active
+          // scheme (e.g. a freshly created one before the next structure
+          // regen). Give it a soft neutral tint so it reads as
+          // "uncategorized", not broken-white.
           backgroundColor: "#F0ECE4",
           borderColor: "#D2CABB",
           borderLeftWidth: 4,
@@ -205,7 +208,7 @@ export function BlockNode({ data, selected }: NodeProps<Node<BlockNodeData>>) {
       {data.caption && (
         <div
           className={`mt-1 text-[11px] leading-snug text-[#666666] ${
-            selected ? "" : "line-clamp-2"
+            data.isExpanded ? "" : "line-clamp-2"
           }`}
         >
           {data.caption}
@@ -231,12 +234,6 @@ export function BlockNode({ data, selected }: NodeProps<Node<BlockNodeData>>) {
             .filter(Boolean)
             .join("\n\n")}
         >
-          {fileCount > 0 && (
-            <>
-              {fileCount} {fileCount === 1 ? "file" : "files"}
-            </>
-          )}
-          {fileCount > 0 && drillCount > 0 && " · "}
           {drillCount > 0 && (
             <>
               {drillCount}{" "}

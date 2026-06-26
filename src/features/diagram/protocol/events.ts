@@ -55,6 +55,20 @@ export type DiagramBusMessageMap = {
    * source/target/verb), resolved to blocks + files by the canvas.
    */
   "connection-lens": ConnectionLensDetail;
+
+  /**
+   * A chat-driven diagram tool (change_block_color / delete_block) ->
+   * Diagram. Lets the chat edit the diagram itself, not just code:
+   * recolor a block (reassign its category) or remove it. The canvas
+   * applies it to the current schema best-effort, matched by block label.
+   */
+  "diagram-op": DiagramOpDetail;
 };
+
+/** Payload for the "diagram-op" topic: a chat-initiated edit of the
+ *  diagram view (block matched by its displayed label). */
+export type DiagramOpDetail =
+  | { op: "recolor"; block: string; category: string }
+  | { op: "delete"; block: string };
 
 export type DiagramBusTopic = keyof DiagramBusMessageMap;

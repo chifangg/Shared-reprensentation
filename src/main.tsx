@@ -11,6 +11,11 @@ import { ReadProjectFileResultCard } from "@/core/tools/builtins/ReadProjectFile
 import { WriteProjectFile } from "@/core/tools/builtins/WriteProjectFile";
 import { WriteProjectFileResultCard } from "@/core/tools/builtins/WriteProjectFileResultCard";
 import { EditProjectFile } from "@/core/tools/builtins/EditProjectFile";
+import {
+  ChangeBlockColor,
+  DeleteBlock,
+  DiagramOpResultCard,
+} from "@/features/diagram/tools/DiagramOps";
 import "./styles.css";
 
 // Claude can read / edit / write any file the user uploaded by calling
@@ -24,6 +29,13 @@ registerClientTool("write_project_file", WriteProjectFile);
 registerToolResult("write_project_file", WriteProjectFileResultCard);
 registerClientTool("edit_project_file", EditProjectFile);
 registerToolResult("edit_project_file", WriteProjectFileResultCard);
+
+// Chat-driven diagram edits (bidirectional): recolor / delete a block on
+// the architecture diagram. These mutate the diagram view, not code.
+registerClientTool("change_block_color", ChangeBlockColor);
+registerToolResult("change_block_color", DiagramOpResultCard);
+registerClientTool("delete_block", DeleteBlock);
+registerToolResult("delete_block", DiagramOpResultCard);
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

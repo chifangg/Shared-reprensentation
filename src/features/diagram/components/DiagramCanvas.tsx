@@ -64,7 +64,9 @@ import { EditSummaryToast } from "./overlays/EditSummaryToast";
 import { RegeneratingChip } from "./overlays/RegeneratingChip";
 import { AdaptiveFocusBanner } from "./overlays/AdaptiveFocusBanner";
 import { AddNewBlockButton } from "./overlays/AddNewBlockButton";
-import { CategoryLegend } from "./overlays/CategoryLegend";
+import { ColorSchemeLegend } from "./overlays/ColorSchemeLegend";
+import { useColorScheme } from "../color/useColorScheme";
+import { resolveBlockColor } from "../color/scheme";
 import { BubbleEditOverlays } from "./overlays/BubbleEditOverlays";
 import { ConnectionLensOverlay } from "./overlays/ConnectionLensOverlay";
 import { useConnectionLens } from "../hooks/useConnectionLens";
@@ -161,6 +163,10 @@ function DiagramCanvasInner({
   // Onboarding survey: gates the structure fetch. Null until the user
   // submits the survey; reset to null on projectKey change AND on the
   // explicit "Regenerate" button (which re-opens the modal).
+  // Active color-encoding scheme (Category default + a test scheme;
+  // AI-generated ones append in Phase 2). Drives block colors + legend.
+  const color = useColorScheme();
+  const activeScheme = color.active;
   const [userGoal, setUserGoal] = useState<string | null>(null);
   // Gates the survey behind the intro overlay: the survey only opens
   // once the intro timeline finished AND the scan resolved. Reset
@@ -242,6 +248,42 @@ function DiagramCanvasInner({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editSummary, pushChatActivity]);
 
+  // Bidirectional editing: a chat-driven diagram tool (change_block_color /
+  // delete_block) emits "diagram-op"; apply it to the current schema,
+  // matched best-effort by the block's displayed label.
+  useDiagramBusSubscribe("diagram-op", (detail) => {
+    setState((prev) => {
+      if (prev.kind !== "ready") return prev;
+      const norm = detail.block.trim().toLowerCase();
+      const target =
+        prev.schema.blocks.find((b) => b.label.toLowerCase() === norm) ??
+        prev.schema.blocks.find((b) => b.label.toLowerCase().includes(norm));
+      if (!target) return prev;
+      if (detail.op === "recolor") {
+        return {
+          kind: "ready",
+          schema: {
+            arrows: prev.schema.arrows,
+            blocks: prev.schema.blocks.map((b) =>
+              b.id === target.id
+                ? { ...b, category: detail.category as typeof b.category }
+                : b,
+            ),
+          },
+        };
+      }
+      return {
+        kind: "ready",
+        schema: {
+          blocks: prev.schema.blocks.filter((b) => b.id !== target.id),
+          arrows: prev.schema.arrows.filter(
+            (a) => a.from !== target.id && a.to !== target.id,
+          ),
+        },
+      };
+    });
+  });
+
   // Live blue pulse on the block(s) whose files Claude is editing RIGHT
   // NOW (turn in flight). Clears on settle, where recentChanges takes
   // over with the persistent post-edit glow.
@@ -305,27 +347,58 @@ function DiagramCanvasInner({
   // route through `type: "bubble"` → FunctionBubble (not BlockNode), and
   // are non-selectable / non-draggable, so onNodesChange never touches
   // their data fields. Safe at runtime; types just need the alignment.
+  // A fan (expanded block) OR an open connection lens dims everything else
+  // so the focused thing stands out: the fan keeps only its block; the lens
+  // keeps only its two endpoint blocks (and, below, its one arrow).
+  const lens = connection.lens;
   const renderedNodes = useMemo<Node<BlockNodeData>[]>(() => {
-    // While a fan is open every OTHER block fades back so the cluster is
-    // the sole focus (the user's "let everything step aside" ask); the
-    // in-the-way ones additionally glide via borrowOffsets. On collapse
-    // expandedBlockId clears, so both the fade and the move reverse.
     const base = nodes.map((n) => {
       const moved = borrowOffsets.get(n.id);
-      const dim = expandedBlockId !== null && n.id !== expandedBlockId;
-      if (!moved && !dim) return n;
+      const dimByFan = expandedBlockId !== null && n.id !== expandedBlockId;
+      const dimByLens =
+        lens !== null && n.id !== lens.from && n.id !== lens.to;
+      const dim = dimByFan || dimByLens;
+      // Resolve this block's fill + accent through the active color
+      // scheme. Done here (not at layout time) so switching schemes
+      // recolors without re-running layout, preserving spatial memory.
+      const resolved = resolveBlockColor(activeScheme, {
+        id: n.id,
+        label: n.data.label,
+        category: n.data.category,
+        fileCount: n.data.files?.length ?? 0,
+      });
+      const data = {
+        ...n.data,
+        colorTint: resolved?.tint,
+        colorAccent: resolved?.accent,
+        // Full description shows in lockstep with the drill-in bubbles:
+        // both follow expandedBlockId, NOT React Flow's `selected` prop.
+        // React Flow keeps `selected` true on a re-click, which would
+        // leave the description open after the bubbles collapse.
+        isExpanded: n.id === expandedBlockId,
+      };
+      if (!moved && !dim) return { ...n, data };
       return {
         ...n,
+        data,
         position: moved ?? n.position,
         style: dim
-          ? { ...n.style, opacity: 0.16, transition: "opacity 200ms ease" }
+          ? {
+              ...n.style,
+              opacity: 0.16,
+              transition: "opacity 200ms ease",
+              // Non-interactive while dimmed so a click on the area AROUND
+              // an open fan / lens falls through to the pane and collapses
+              // it, instead of being swallowed by a faded block.
+              pointerEvents: "none" as const,
+            }
           : n.style,
       };
     });
     return bubbleNodes.length === 0
       ? base
       : [...base, ...(bubbleNodes as unknown as Node<BlockNodeData>[])];
-  }, [nodes, bubbleNodes, borrowOffsets, expandedBlockId]);
+  }, [nodes, bubbleNodes, borrowOffsets, expandedBlockId, lens, activeScheme]);
 
   // Global obstacle-avoiding routing with lane separation (see hook).
   const edgesWithRoutes = useEdgeRouting(nodes, edges);
@@ -335,13 +408,21 @@ function DiagramCanvasInner({
   // LabeledEdge drop the pill's opacity and pointer events; the path
   // dims via the style opacity. Restores the moment the fan collapses.
   const renderedEdges = useMemo<Edge[]>(() => {
-    if (expandedBlockId === null) return edgesWithRoutes;
-    return edgesWithRoutes.map((e) => ({
+    const dimEdge = (e: Edge): Edge => ({
       ...e,
       style: { ...e.style, opacity: 0.1, transition: "opacity 200ms ease" },
       data: { ...e.data, dimmed: true },
-    }));
-  }, [edgesWithRoutes, expandedBlockId]);
+    });
+    if (expandedBlockId !== null) return edgesWithRoutes.map(dimEdge);
+    if (lens !== null) {
+      // Lens open: keep only the lensed arrow lit, dim the rest, so the
+      // popup + its two blocks + that one arrow read clearly.
+      return edgesWithRoutes.map((e) =>
+        e.source === lens.from && e.target === lens.to ? e : dimEdge(e),
+      );
+    }
+    return edgesWithRoutes;
+  }, [edgesWithRoutes, expandedBlockId, lens]);
 
 
   // Reset the small in-component state on USER-initiated project
@@ -604,14 +685,17 @@ function DiagramCanvasInner({
           />
         )}
         {state.kind === "ready" && view === "overview" && (
-          <CategoryLegend
-            present={
-              new Set(
-                state.schema.blocks
-                  .map((b) => b.category)
-                  .filter((c): c is NonNullable<typeof c> => !!c),
-              )
+          <ColorSchemeLegend
+            schemes={color.schemes}
+            active={color.active}
+            onSelect={color.setActiveId}
+            blocks={state.schema.blocks}
+            onGenerate={(instruction) =>
+              color.generate(state.schema.blocks, instruction)
             }
+            generating={color.generating}
+            genError={color.genError}
+            onClearGenError={color.clearGenError}
           />
         )}
         {state.kind === "ready" && (
@@ -630,17 +714,40 @@ function DiagramCanvasInner({
             }}
           />
         )}
-        {connection.lens && state.kind === "ready" && (
-          <ConnectionLensOverlay
-            key={`${connection.lens.from}-${connection.lens.to}-${connection.lens.verb}`}
-            detail={connection.lens}
-            blocks={state.schema.blocks}
-            files={files}
-            onClose={connection.close}
-            offset={connection.cardOffset}
-            onOffsetChange={connection.setCardOffset}
-          />
-        )}
+        {connection.lens &&
+          state.kind === "ready" &&
+          (() => {
+            // Resolve the two endpoint blocks' colors through the active
+            // scheme so the lens header can tint each end to match its
+            // block on the canvas (instead of an arbitrary accent).
+            const ln = connection.lens;
+            const blocks = state.schema.blocks;
+            const accentOf = (id: string): string | null => {
+              const b = blocks.find((x) => x.id === id);
+              if (!b) return null;
+              return (
+                resolveBlockColor(activeScheme, {
+                  id: b.id,
+                  label: b.label,
+                  category: b.category,
+                  fileCount: b.provenance.files.length,
+                })?.accent ?? null
+              );
+            };
+            return (
+              <ConnectionLensOverlay
+                key={`${ln.from}-${ln.to}-${ln.verb}`}
+                detail={ln}
+                blocks={blocks}
+                files={files}
+                onClose={connection.close}
+                offset={connection.cardOffset}
+                onOffsetChange={connection.setCardOffset}
+                fromColor={accentOf(ln.from)}
+                toColor={accentOf(ln.to)}
+              />
+            );
+          })()}
       </div>
       {panelOpen && state.kind === "ready" && (
         <DiagramFocusPanel
