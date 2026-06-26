@@ -193,10 +193,27 @@ export function ChatView({ model }: { model?: string }) {
     session.removePendingToolCall,
   ]);
 
-  const endRef = useRef<HTMLDivElement>(null);
+  // Stick the transcript to the bottom as content streams in, UNLESS the
+  // user has scrolled up to read history (then leave them where they are
+  // until they scroll back down near the bottom).
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const stickToBottomRef = useRef(true);
+  const handleScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    stickToBottomRef.current =
+      el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+  };
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [turns.length, session.pendingToolCalls.length, running]);
+    if (!stickToBottomRef.current) return;
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [
+    session.messages,
+    session.pendingToolCalls.length,
+    running,
+    activityEntries.length,
+  ]);
 
   return (
     <div
@@ -227,7 +244,11 @@ export function ChatView({ model }: { model?: string }) {
         </span>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-3 py-4 space-y-4">
+      <div
+        ref={scrollRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto px-3 py-4 space-y-4"
+      >
         {turns.length === 0 && !hasFiles && <NoProjectPrompt />}
         {turns.length === 0 && hasFiles && <ReadyPrompt />}
         {turns.map((t, idx) => {
@@ -268,7 +289,6 @@ export function ChatView({ model }: { model?: string }) {
           );
         })}
         {running && <ThinkingBubble />}
-        <div ref={endRef} />
       </div>
 
       {session.error && (
@@ -378,7 +398,7 @@ function projectTurns(messages: ClaudeMessage[]): Turn[] {
 function Avatar({ role }: { role: "user" | "assistant" }) {
   if (role === "user") {
     return (
-      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#2E2A25] text-[#EFE9DD]">
+      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#5E5A51] text-[#EFE9DD]">
         <User size={14} />
       </div>
     );

@@ -508,7 +508,7 @@ function UploadButton({
 }) {
   return (
     <label
-      className={`${PILL_BUTTON} flex w-40 cursor-pointer items-center justify-center gap-2`}
+      className={`${PILL_BUTTON} flex w-36 cursor-pointer items-center justify-center gap-2 whitespace-nowrap`}
     >
       {icon}
       <span>{label}</span>
@@ -674,7 +674,7 @@ export function buildChatSystemPrompt(
   return [
     "You are a code-explanation and code-editing assistant for a project the user uploaded into the browser.",
     "",
-    "Below is the full file tree of the uploaded project. You have three tools:",
+    "Below is the full file tree of the uploaded project. You have these file tools:",
     "  • `read_project_file(path)` — fetch a file's full contents.",
     "  • `edit_project_file(path, old_string, new_string, replace_all?)` — replace one substring with another in place. PREFERRED for small edits — much faster than rewriting the whole file.",
     "  • `write_project_file(path, content)` — overwrite a file (or create a new one) with the given full body. Use only for new files or when changing most of a file.",

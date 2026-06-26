@@ -98,12 +98,12 @@ export function AppShell() {
         </Panel>
         <ResizeHandle />
 
-        <Panel id="chat" defaultSize={16} minSize={14}>
+        <Panel id="chat" defaultSize={20} minSize={14}>
           <ChatView />
         </Panel>
         <ResizeHandle />
 
-        <Panel id="diagram" defaultSize={58} minSize={30}>
+        <Panel id="diagram" defaultSize={54} minSize={30}>
           <DiagramPanel />
         </Panel>
       </Group>

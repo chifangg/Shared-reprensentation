@@ -211,6 +211,12 @@ export function buildBubbleAndSectorNodes(args: {
     },
     draggable: false,
     selectable: false,
+    // Purely decorative backdrop: make the whole node click-through so a
+    // click on the fan area (this node's large bounding box) falls through
+    // to the pane and collapses the cluster, instead of being swallowed by
+    // the React Flow node wrapper (which captures clicks even though the
+    // inner SVG is pointer-events-none).
+    style: { pointerEvents: "none" },
     width: sectorOuterR * 2,
     height: sectorOuterR * 2,
     zIndex: -1,

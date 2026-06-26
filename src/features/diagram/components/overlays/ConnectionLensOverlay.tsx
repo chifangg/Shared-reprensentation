@@ -1,14 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  X,
-  Loader2,
-  Zap,
-  Package,
-  Info,
-  ChevronRight,
-  ChevronDown,
-} from "lucide-react";
-import type { LucideIcon } from "lucide-react";
+import { X, Loader2, Zap, Package, Info } from "lucide-react";
 import type { ConnectionLensDetail, DiagramBlock } from "../../types";
 import type { FileEntry } from "@/core/project";
 import {
@@ -23,26 +14,56 @@ import {
  *
  *   - How    (realization): how the relationship is wired, one sentence.
  *   - Uses   (substrate):   packages / APIs / shared components it needs.
- *   - Hidden (contract):    seam details the block captions do not mention.
+ *   - Notes  (contract):    seam details the block captions do not mention.
  *
- * Visually distinct from the function bubbles (cool slate vs warm sand)
- * so it reads as "a line, not a block". Empty lenses are omitted, so the
- * card never shows a field with nothing in it. "How" auto-expands; the
- * others stay collapsed (with a hover peek) until clicked.
+ * Shares the warm-neutral (stone/sand) palette of the rest of the canvas
+ * rather than a cool blue, so it does not read as a stray "AI panel" and
+ * does not fight the gray arrows.
+ *
+ * Layout: a stacked header (from / verb / to, each block name in its own
+ * scheme color) over a fixed three-pane body, NOT a collapsible accordion:
+ *   - left column:  How on top, Uses below
+ *   - right column: Notes, full height
+ * The panes are always open (no chevrons), so the card reads as a designed
+ * fact sheet rather than a generic disclosure list.
+ *
+ * Empty fields are omitted, and the column layout collapses to a single
+ * stack when there is no Notes content, so the card never shows a pane
+ * with nothing in it.
  *
  * Read-only: it never writes code. Direct manipulation is a later lens.
  */
 
-const W = 320;
+const W = 380;
+/** Fallback for block-name TEXT in the header: scheme accents can be light,
+ *  but an uncategorized block has none, so it uses a darker stone. */
+const NEUTRAL_TEXT = "#6B6256";
 
-type LensKey = "how" | "uses" | "hidden";
-const LENS_META: Record<LensKey, { icon: LucideIcon; label: string }> = {
-  how: { icon: Zap, label: "How" },
-  uses: { icon: Package, label: "Uses" },
-  // "Notes" reads better than "Hidden": it is extra detail worth knowing,
-  // not something secret. (The internal field stays `hidden`.)
-  hidden: { icon: Info, label: "Notes" },
-};
+/** One always-open pane (icon + label header over its content). Hoisted to
+ *  module scope so its component identity is stable across renders. */
+function Pane({
+  icon: Icon,
+  label,
+  children,
+}: {
+  icon: typeof Zap;
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="rounded-lg border border-[#EBE6DD] bg-white p-2.5">
+      <div className="mb-1.5 flex items-center gap-1.5">
+        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-[#F0ECE4] text-[#9A8F7D]">
+          <Icon className="h-3 w-3" strokeWidth={2.2} />
+        </span>
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-[#8A8276]">
+          {label}
+        </span>
+      </div>
+      {children}
+    </section>
+  );
+}
 
 export function ConnectionLensOverlay({
   detail,
@@ -51,6 +72,8 @@ export function ConnectionLensOverlay({
   onClose,
   offset,
   onOffsetChange,
+  fromColor,
+  toColor,
 }: {
   detail: ConnectionLensDetail;
   blocks: DiagramBlock[];
@@ -59,6 +82,10 @@ export function ConnectionLensOverlay({
   /** Drag offset (screen px), owned by the parent so it survives close. */
   offset: { dx: number; dy: number };
   onOffsetChange: (o: { dx: number; dy: number }) => void;
+  /** Scheme accent of the source / target block, resolved upstream. Null
+   *  when the block falls outside every group in the active scheme. */
+  fromColor: string | null;
+  toColor: string | null;
 }) {
   const fromBlock = blocks.find((b) => b.id === detail.from);
   const toBlock = blocks.find((b) => b.id === detail.to);
@@ -66,12 +93,6 @@ export function ConnectionLensOverlay({
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [result, setResult] = useState<ConnectionDetailResult>({});
   const [error, setError] = useState("");
-  // How is open by default; the user opens the others on demand.
-  const [open, setOpen] = useState<Record<LensKey, boolean>>({
-    how: true,
-    uses: false,
-    hidden: false,
-  });
 
   // Transient drag tracking. The committed offset lives in the parent
   // (via offset / onOffsetChange) so it survives the card closing.
@@ -129,27 +150,65 @@ export function ConnectionLensOverlay({
   }, [detail.from, detail.to, detail.verb]);
 
   // Which lenses actually have content (empty ones are never shown).
-  const present: LensKey[] = [];
-  if (result.realization) present.push("how");
-  if (result.uses && result.uses.length > 0) present.push("uses");
-  if (result.hidden && result.hidden.length > 0) present.push("hidden");
+  const howP = !!result.realization;
+  const usesP = !!result.uses && result.uses.length > 0;
+  const notesP = !!result.hidden && result.hidden.length > 0;
 
-  const peek = (k: LensKey): string => {
-    if (k === "uses") return (result.uses ?? []).join(", ");
-    if (k === "hidden") return (result.hidden ?? []).join(" · ");
-    return result.realization ?? "";
-  };
+  const fromText = fromColor ?? NEUTRAL_TEXT;
+  const toText = toColor ?? NEUTRAL_TEXT;
+
+  const howEl = howP ? (
+    <Pane icon={Zap} label="How">
+      <p className="break-words text-[12px] leading-snug text-[#4A453F]">
+        {result.realization}
+      </p>
+    </Pane>
+  ) : null;
+
+  const usesEl = usesP ? (
+    <Pane icon={Package} label="Uses">
+      <div className="flex flex-wrap gap-1">
+        {(result.uses ?? []).map((u, i) => (
+          <span
+            key={i}
+            className="rounded-md bg-[#F0ECE4] px-1.5 py-0.5 text-[11px] font-medium text-[#6B6256]"
+          >
+            {u}
+          </span>
+        ))}
+      </div>
+    </Pane>
+  ) : null;
+
+  const notesEl = notesP ? (
+    <Pane icon={Info} label="Notes">
+      <ul className="space-y-1.5">
+        {(result.hidden ?? []).map((h, i) => (
+          <li
+            key={i}
+            className="flex gap-1.5 text-[12px] leading-snug text-[#4A453F]"
+          >
+            <span className="mt-[5px] h-1 w-1 shrink-0 rounded-full bg-[#B8AFA0]" />
+            <span className="min-w-0 break-words">{h}</span>
+          </li>
+        ))}
+      </ul>
+    </Pane>
+  ) : null;
+
+  // Two columns only when there is a right pane (Notes) AND something for
+  // the left; otherwise everything stacks in one column.
+  const twoCol = !!notesEl && (!!howEl || !!usesEl);
 
   // Floating card, anchored to the diagram pane CENTER (which is where
   // opening zooms the edge to), offset to the right and vertically
-  // centered on it. Anchoring to the centered edge (not the raw click)
-  // keeps the card in the right place after the zoom animation. Capped to
-  // the pane height with an internal scroll so long content is not cut.
+  // centered on it. Capped to the pane height with an internal scroll.
   return (
     <>
       <div className="absolute inset-0 z-40" onClick={onClose} />
+
       <div
-        className="absolute z-50 flex flex-col rounded-xl border border-[#CFD6DD] bg-[#F7F9FB] shadow-xl"
+        className="absolute z-50 flex flex-col overflow-hidden rounded-xl border border-[#E7E2DA] bg-[#FCFBF9] shadow-xl"
         style={{
           left: "50%",
           top: "50%",
@@ -159,9 +218,11 @@ export function ConnectionLensOverlay({
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header: from -> verb -> to. Doubles as the drag handle. */}
+        {/* Header: from / verb / to stacked, each block name in its own
+         *  scheme color so the card maps back to the canvas. Doubles as the
+         *  drag handle. */}
         <div
-          className="flex shrink-0 cursor-grab items-start gap-2 border-b border-[#E1E6EB] px-3.5 py-2.5 active:cursor-grabbing"
+          className="relative z-10 shrink-0 cursor-grab border-b border-[#F0ECE4] px-4 py-3 text-center active:cursor-grabbing"
           onPointerDown={(e) => {
             (e.target as HTMLElement).setPointerCapture(e.pointerId);
             dragRef.current = {
@@ -188,24 +249,37 @@ export function ConnectionLensOverlay({
             }
           }}
         >
-          <div className="min-w-0 flex-1 text-[12px] leading-snug text-[#44505B]">
-            <span className="font-semibold">{fromBlock?.label ?? detail.from}</span>
-            <span className="mx-1 text-[#8A97A3]">{detail.verb}</span>
-            <span className="font-semibold">{toBlock?.label ?? detail.to}</span>
-          </div>
           <button
             onClick={onClose}
             onPointerDown={(e) => e.stopPropagation()}
-            className="cursor-pointer rounded p-0.5 text-[#8A97A3] transition-colors hover:bg-[#E7ECF1] hover:text-[#55616C]"
+            className="absolute right-2 top-2 cursor-pointer rounded p-0.5 text-[#A8A29E] transition-colors hover:bg-[#F0ECE4] hover:text-[#78716C]"
             aria-label="Close"
           >
             <X className="h-3.5 w-3.5" />
           </button>
+
+          <div
+            className="truncate text-[13px] font-semibold leading-tight"
+            style={{ color: fromText }}
+            title={fromBlock?.label ?? detail.from}
+          >
+            {fromBlock?.label ?? detail.from}
+          </div>
+          <div className="my-1 text-[9px] font-semibold uppercase tracking-[0.14em] text-[#A8A29E]">
+            {detail.verb}
+          </div>
+          <div
+            className="truncate text-[13px] font-semibold leading-tight"
+            style={{ color: toText }}
+            title={toBlock?.label ?? detail.to}
+          >
+            {toBlock?.label ?? detail.to}
+          </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-3.5 py-3">
+        <div className="relative z-10 flex-1 overflow-y-auto p-3">
           {state === "loading" && (
-            <div className="flex items-center gap-2 py-3 text-[12px] text-[#6A7682]">
+            <div className="flex items-center gap-2 py-3 text-[12px] text-[#78716C]">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
               Reading this link...
             </div>
@@ -217,79 +291,29 @@ export function ConnectionLensOverlay({
             </div>
           )}
 
-          {state === "ready" && present.length === 0 && (
-            <div className="py-2 text-[12px] leading-snug text-[#6A7682]">
+          {state === "ready" && !howEl && !usesEl && !notesEl && (
+            <div className="py-2 text-[12px] leading-snug text-[#78716C]">
               No code-level detail found for this link. It may be an inferred
               relationship.
             </div>
           )}
 
-          {state === "ready" && present.length > 0 && (
-            <div className="flex flex-col gap-1.5">
-              {present.map((k) => {
-                const meta = LENS_META[k];
-                const Icon = meta.icon;
-                const isOpen = open[k];
-                return (
-                  <div key={k}>
-                    <button
-                      onClick={() => setOpen((o) => ({ ...o, [k]: !o[k] }))}
-                      title={!isOpen ? peek(k) : undefined}
-                      className="flex w-full items-center gap-1.5 rounded-lg border border-[#D5DCE3] bg-white px-2 py-1.5 text-left transition-colors hover:border-[#BCC6CF]"
-                    >
-                      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-[#EAEEF2] text-[#6A7682]">
-                        <Icon className="h-3 w-3" strokeWidth={2.2} />
-                      </span>
-                      <span className="text-[11.5px] font-semibold text-[#55616C]">
-                        {meta.label}
-                      </span>
-                      <span className="ml-auto text-[#A6B0BA]">
-                        {isOpen ? (
-                          <ChevronDown className="h-3.5 w-3.5" />
-                        ) : (
-                          <ChevronRight className="h-3.5 w-3.5" />
-                        )}
-                      </span>
-                    </button>
-                    {isOpen && (
-                      <div className="px-2 pb-1 pt-1.5">
-                        {k === "how" && (
-                          <p className="text-[12px] leading-snug text-[#465058]">
-                            {result.realization}
-                          </p>
-                        )}
-                        {k === "uses" && (
-                          <div className="flex flex-wrap gap-1">
-                            {(result.uses ?? []).map((u, i) => (
-                              <span
-                                key={i}
-                                className="rounded-md bg-[#E9EEF2] px-1.5 py-0.5 text-[11px] font-medium text-[#52606B]"
-                              >
-                                {u}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                        {k === "hidden" && (
-                          <ul className="space-y-1">
-                            {(result.hidden ?? []).map((h, i) => (
-                              <li
-                                key={i}
-                                className="flex gap-1.5 text-[12px] leading-snug text-[#465058]"
-                              >
-                                <span className="mt-[5px] h-1 w-1 shrink-0 rounded-full bg-[#8A97A3]" />
-                                {h}
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
+          {state === "ready" &&
+            (twoCol ? (
+              <div className="grid grid-cols-2 items-start gap-2">
+                <div className="flex min-w-0 flex-col gap-2">
+                  {howEl}
+                  {usesEl}
+                </div>
+                <div className="min-w-0">{notesEl}</div>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {howEl}
+                {usesEl}
+                {notesEl}
+              </div>
+            ))}
         </div>
       </div>
     </>
