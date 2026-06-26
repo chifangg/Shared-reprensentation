@@ -145,6 +145,60 @@ pub(super) fn capability_scan_tools() -> Vec<serde_json::Value> {
     ]
 }
 
+fn scheme_input_schema() -> serde_json::Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "name": { "type": "string", "minLength": 1, "description": "Short title for the whole encoding (2-4 words), e.g. \"Data flow stage\"." },
+            "description": { "type": "string", "description": "One sentence stating what the colors mean, shown under the name in the legend." },
+            "groups": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 6,
+                "description": "The named color groups, in a sensible order. The UI paints each from a fixed palette by this order.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "key": { "type": "string", "minLength": 1, "description": "Short snake_case slug, e.g. \"ingest\"." },
+                        "label": { "type": "string", "minLength": 1, "description": "Short human title, 1-3 words." },
+                        "blurb": { "type": "string", "description": "One short sentence on what blocks in this group share." }
+                    },
+                    "required": ["key", "label"]
+                }
+            },
+            "assignments": {
+                "type": "array",
+                "minItems": 1,
+                "description": "One entry per block, mapping the block id to one group key. Every block id must appear exactly once.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "block_id": { "type": "string", "minLength": 1, "description": "A block id from the user message." },
+                        "group_key": { "type": "string", "minLength": 1, "description": "The key of one of the groups above." }
+                    },
+                    "required": ["block_id", "group_key"]
+                }
+            }
+        },
+        "required": ["name", "groups", "assignments"]
+    })
+}
+
+pub(super) fn color_scheme_tools() -> Vec<serde_json::Value> {
+    vec![
+        json!({
+            "name": "scheme",
+            "description": "Emit the color encoding: its name, description, groups, and per-block assignments. Call exactly once.",
+            "input_schema": scheme_input_schema(),
+        }),
+        json!({
+            "name": "done",
+            "description": "Signal that the scheme has been emitted.",
+            "input_schema": empty_input_schema(),
+        }),
+    ]
+}
+
 /// Translate a streamed tool_use call into the NDJSON line shape the
 /// frontend already consumes (`{kind, data}` for most tools, `{kind:
 /// "focus", ids: [...]}` for the focus tool, and `{kind: "done"}` for

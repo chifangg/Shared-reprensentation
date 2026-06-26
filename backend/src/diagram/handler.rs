@@ -21,9 +21,12 @@ use axum::Json;
 use serde::Deserialize;
 use serde_json::json;
 
-use super::prompts::{CAPABILITY_SCAN_SYSTEM, FOCUS_SYSTEM, STRUCTURE_SYSTEM};
+use super::prompts::{
+    CAPABILITY_SCAN_SYSTEM, COLOR_SCHEME_SYSTEM, FOCUS_SYSTEM, STRUCTURE_SYSTEM,
+};
 use super::tools::{
-    capability_scan_tools, focus_tools, structure_tools, tool_use_to_ndjson,
+    capability_scan_tools, color_scheme_tools, focus_tools, structure_tools,
+    tool_use_to_ndjson,
 };
 
 #[derive(Debug, Deserialize)]
@@ -34,6 +37,11 @@ pub struct DiagramRequest {
     chat_context: Option<String>,
     #[serde(default)]
     base_schema: Option<String>,
+    /// Free-text grouping request for the `color_scheme` view ("describe
+    /// your own"). Absent / empty means "let the model pick the most
+    /// insightful encoding". Ignored by the other views.
+    #[serde(default)]
+    instruction: Option<String>,
 }
 
 /// Build the initial user message for the diagram conversation. The
@@ -47,8 +55,9 @@ fn build_initial_user_content(
     project_context: &str,
     chat_block: &str,
     base_block: &str,
+    instruction_block: &str,
 ) -> Vec<serde_json::Value> {
-    let variable_tail = format!("{}{}", base_block, chat_block);
+    let variable_tail = format!("{}{}{}", base_block, chat_block, instruction_block);
     let mut user_content = vec![json!({
         "type": "text",
         "text": format!("PROJECT:\n{}", project_context),
@@ -71,6 +80,7 @@ fn build_diagram_body(
         "structure" => (STRUCTURE_SYSTEM, structure_tools()),
         "focus" => (FOCUS_SYSTEM, focus_tools()),
         "capability_scan" => (CAPABILITY_SCAN_SYSTEM, capability_scan_tools()),
+        "color_scheme" => (COLOR_SCHEME_SYSTEM, color_scheme_tools()),
         _ => return None,
     };
 
@@ -128,13 +138,24 @@ pub async fn generate_diagram(Json(req): Json<DiagramRequest>) -> Response {
         .map(|s| format!("\n\nEXISTING OVERVIEW BLOCKS:\n{}\n", s))
         .unwrap_or_default();
 
+    let instruction_block = req
+        .instruction
+        .as_ref()
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| format!("\n\n<encoding_request>\n{}\n</encoding_request>\n", s))
+        .unwrap_or_default();
+
     // Validate view up front so we don't enter the stream with garbage.
     if build_diagram_body(&req.view, &[]).is_none() {
         return ndjson_error(format!("unknown view: {}", req.view));
     }
 
-    let initial_user_content =
-        build_initial_user_content(&req.project_context, &chat_block, &base_block);
+    let initial_user_content = build_initial_user_content(
+        &req.project_context,
+        &chat_block,
+        &base_block,
+        &instruction_block,
+    );
     let view = req.view.clone();
 
     let body_stream = async_stream::stream! {

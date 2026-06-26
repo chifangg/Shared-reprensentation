@@ -41,6 +41,11 @@ tower-http = { version = "0.6", features = ["fs", "cors"] }
 clap = { version = "4.0", features = ["derive"] }
 async-stream = "0.3.6"
 dotenvy = "0.15"
+# reqwest uses native-tls-vendored (its own OpenSSL), which on macOS does
+# not read the system keychain and otherwise can't find CA roots, so TLS
+# to api.anthropic.com fails. openssl-probe locates the system CA bundle
+# at startup and points OpenSSL at it via SSL_CERT_FILE/SSL_CERT_DIR.
+openssl-probe = "0.1"
 
 [profile.release]
 strip = true

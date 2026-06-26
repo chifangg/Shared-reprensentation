@@ -37,6 +37,13 @@ async fn main() {
     let _ = dotenvy::from_filename(".env")
         .or_else(|_| dotenvy::from_filename("backend/.env"));
 
+    // Point reqwest's vendored OpenSSL at the system CA bundle. Without
+    // this, TLS to api.anthropic.com fails on macOS ("error sending
+    // request for url") because vendored OpenSSL has no built-in roots and
+    // does not consult the keychain. Only sets the vars if unset, so an
+    // explicit SSL_CERT_FILE in the env still wins.
+    openssl_probe::init_ssl_cert_env_vars();
+
     env_logger::init();
 
     let args = Args::parse();
@@ -184,6 +191,55 @@ fn build_tool_registry() -> core::tools::ToolRegistry {
                 }
             },
             "required": ["path", "content"],
+            "additionalProperties": false
+        }),
+    );
+
+    b.client_tool(
+        "change_block_color",
+        "Recolor a block on the architecture diagram by reassigning its \
+         category (the category drives the block's color). Use this when \
+         the user asks to change a block's color or category ON THE \
+         DIAGRAM, not its code. `block` is the block's label exactly as it \
+         appears on the diagram.",
+        json!({
+            "type": "object",
+            "properties": {
+                "block": {
+                    "type": "string",
+                    "description": "The block's label exactly as shown on the diagram."
+                },
+                "category": {
+                    "type": "string",
+                    "enum": ["interface", "logic", "data", "state", "integration", "config"],
+                    "description": "The new category, which sets the block's color. \
+                        Categories and their colors: interface = warm coral, \
+                        logic = olive green, data = slate blue, state = teal, \
+                        integration = mauve, config = taupe. When the user names \
+                        a color, pick the category whose color matches."
+                }
+            },
+            "required": ["block", "category"],
+            "additionalProperties": false
+        }),
+    );
+
+    b.client_tool(
+        "delete_block",
+        "Remove a block (and its connections) from the architecture \
+         diagram. Use this when the user asks to delete or remove a block \
+         FROM THE DIAGRAM. This changes only the diagram view, not the \
+         project's code. `block` is the block's label exactly as it appears \
+         on the diagram.",
+        json!({
+            "type": "object",
+            "properties": {
+                "block": {
+                    "type": "string",
+                    "description": "The block's label exactly as shown on the diagram."
+                }
+            },
+            "required": ["block"],
             "additionalProperties": false
         }),
     );
